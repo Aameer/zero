@@ -322,13 +322,24 @@ const SearchInterface = () => {
   };
 
   const handleImageUpload = async (file: File) => {
+    if (!file) {
+      toast.error('Please select an image');
+      return;
+    }
+  
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please upload an image file');
+      return;
+    }
+  
     const reader = new FileReader();
     reader.onloadend = async () => {
-      setImagePreview(reader.result as string);
-      setIsSearching(true);
-      setIsLoading(true);
-      
       try {
+        setImagePreview(reader.result as string);
+        setIsSearching(true);
+        setIsLoading(true);
+        
         const response = await searchApi.imageSearch(file);
         console.log('Image search response:', response);
         
@@ -346,13 +357,12 @@ const SearchInterface = () => {
           }));
           
           setDisplayedItems(mappedResults);
-          toast.success('Image search completed successfully');
-        } else {
-          throw new Error('Image search failed');
+          toast.success(`Found ${response.total_results} similar products`);
         }
       } catch (error) {
         console.error('Image search error:', error);
         toast.error('Image search failed, showing sample results');
+        
         // Fallback to mock results
         const mockResults = defaultCatalog
           .slice(0, 3)
@@ -365,6 +375,12 @@ const SearchInterface = () => {
         setIsLoading(false);
       }
     };
+  
+    reader.onerror = () => {
+      toast.error('Error reading image file');
+      setIsLoading(false);
+    };
+  
     reader.readAsDataURL(file);
   };
 
@@ -520,20 +536,30 @@ const SearchInterface = () => {
           </TabsContent>
 
           <TabsContent value="image">
-            <div className="flex items-center">
-              <Input
-                type="file"
-                accept="image/*"
-                onChange={(e) => e.target.files && handleImageUpload(e.target.files[0])}
-                className="flex-grow"
-              />
-              <Button onClick={() => setSearchType('image')} className="ml-2">
-                <ImageIcon className="w-4 h-4" />
-              </Button>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      handleImageUpload(file);
+                    }
+                  }}
+                  className="flex-grow"
+                />
+              </div>
+              {imagePreview && (
+                <div className="mt-4">
+                  <img 
+                    src={imagePreview} 
+                    alt="Preview" 
+                    className="max-w-xs rounded-lg shadow-md"
+                  />
+                </div>
+              )}
             </div>
-            {imagePreview && (
-              <img src={imagePreview} alt="Preview" className="mt-4 max-w-xs rounded-lg" />
-            )}
           </TabsContent>
 
           <TabsContent value="voice">

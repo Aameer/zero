@@ -36,10 +36,15 @@ export const searchApi = {
     return response.data;
   },
 
-  async imageSearch(file: File) {
+  async imageSearch(file: File): Promise<APIResponse> {
     const formData = new FormData();
-    formData.append('image', file);
-    const response = await axios.post(`${API_BASE_URL}/search/image`, formData);
+    formData.append('file', file); // Changed from 'image' to 'file'
+    
+    const response = await axios.post(`${API_BASE_URL}/search/image`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
     return response.data;
   },
 
