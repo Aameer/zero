@@ -24,6 +24,7 @@ interface SearchResult {
   color: string;
   category: string;
   imageUrl: string;
+  description: string;
 }
 
 const defaultCatalog: SearchResult[] = [
@@ -35,7 +36,8 @@ const defaultCatalog: SearchResult[] = [
     similarity: 1,
     color: "White",
     category: "T-Shirts",
-    imageUrl: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400&h=400&fit=crop"
+    imageUrl: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400&h=400&fit=crop",
+    description: "Comfortable cotton t-shirt for everyday wear."
   },
   {
     id: 2,
@@ -45,9 +47,9 @@ const defaultCatalog: SearchResult[] = [
     similarity: 1,
     color: "Black",
     category: "Shoes",
-    imageUrl: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&h=400&fit=crop"
+    imageUrl: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&h=400&fit=crop",
+    description: "Professional running shoes with advanced cushioning."
   },
-  // ... (your existing catalog items)
 ];
 
 const ProductSkeleton = () => (
@@ -58,7 +60,7 @@ const ProductSkeleton = () => (
     <div className="flex justify-between items-center mb-2">
       <div className="h-6 bg-gray-200 rounded w-1/3"></div>
       <div className="h-6 bg-gray-200 rounded w-1/4"></div>
-    </div>
+      </div>
   </div>
 );
 
@@ -74,12 +76,115 @@ const RetryInitialLoad = () => (
     </Button>
   </div>
 );
+// Add these helper functions near the top of your SearchInterface component file
+const resampleAudio = async (
+  audioBuffer: AudioBuffer,
+  targetSampleRate: number,
+  audioContext: AudioContext
+): Promise<AudioBuffer> => {
+  const sourceDuration = audioBuffer.duration;
+  const sourceLength = audioBuffer.length;
+  const targetLength = Math.round(sourceLength * targetSampleRate / audioBuffer.sampleRate);
+  const offlineContext = new OfflineAudioContext(
+    audioBuffer.numberOfChannels,
+    targetLength,
+    targetSampleRate
+  );
 
+  const bufferSource = offlineContext.createBufferSource();
+  bufferSource.buffer = audioBuffer;
+  bufferSource.connect(offlineContext.destination);
+  bufferSource.start();
+
+  try {
+    const renderedBuffer = await offlineContext.startRendering();
+    return renderedBuffer;
+  } catch (error) {
+    console.error('Error resampling audio:', error);
+    throw error;
+  }
+};
+
+const convertToWAV = async (audioBlob: Blob, audioContext: AudioContext): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = async () => {
+      try {
+        const arrayBuffer = reader.result as ArrayBuffer;
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        const resampledBuffer = await resampleAudio(audioBuffer, 16000, audioContext);
+        
+        // Convert to WAV format
+        const wavBuffer = await encodeWAV(resampledBuffer);
+        const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+        resolve(wavBlob);
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    reader.onerror = (error) => reject(error);
+    reader.readAsArrayBuffer(audioBlob);
+  });
+};
+
+const encodeWAV = (audioBuffer: AudioBuffer): ArrayBuffer => {
+  const numChannels = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const format = 1; // PCM
+  const bitDepth = 16;
+  
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  
+  const buffer = audioBuffer.getChannelData(0);
+  const samples = new Int16Array(buffer.length);
+  
+  // Convert Float32 to Int16
+  for (let i = 0; i < buffer.length; i++) {
+    const s = Math.max(-1, Math.min(1, buffer[i]));
+    samples[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  
+  const dataSize = samples.length * bytesPerSample;
+  const buffer32 = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer32);
+  
+  // Write WAV header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, format, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+  
+  // Write PCM samples
+  const offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    view.setInt16(offset + (i * bytesPerSample), samples[i], true);
+  }
+  
+  return buffer32;
+};
+
+const writeString = (view: DataView, offset: number, string: string): void => {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+};
 const SearchInterface = () => {
   const [searchType, setSearchType] = useState('text');
   const [query, setQuery] = useState('');
   const [isRecording, setIsRecording] = useState(false);
-  const [displayedItems, setDisplayedItems] = useState<SearchResult[]>(defaultCatalog);
+  const [displayedItems, setDisplayedItems] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +201,7 @@ const SearchInterface = () => {
   const [initialLoading, setInitialLoading] = useState(true);
   const maxRetries = 3;
 
-  const brands = ['Nike', 'Adidas', 'Puma', 'Ralph Lauren'];
+  const brands = ['Nike', 'Adidas', 'Under Armour', 'Puma'];
   const sortOptions = [
     { value: 'relevance', label: 'Most Relevant' },
     { value: 'price_asc', label: 'Price: Low to High' },
@@ -113,9 +218,10 @@ const SearchInterface = () => {
         setInitialLoading(true);
         console.log('Fetching products...');
         const response = await searchApi.getAllProducts();
-        console.log('Products received:', response);
+        console.log('Products received:', response.data);
+        
         if (response && response.data) {
-          const products = response.data.map(product => ({
+          const products: SearchResult[] = response.data.map((product: any) => ({
             id: product.id,
             title: product.title,
             brand: product.brand,
@@ -123,12 +229,13 @@ const SearchInterface = () => {
             similarity: 1,
             color: product.color,
             category: product.category,
-            imageUrl: product.image_url
+            imageUrl: product.image_url,
+            description: product.description
           }));
+          
+          console.log('Mapped products:', products);
           setDisplayedItems(products);
           toast.success('Products loaded successfully');
-        } else {
-          throw new Error('Failed to fetch products');
         }
       } catch (error) {
         console.error('Error fetching products:', error);
@@ -150,26 +257,6 @@ const SearchInterface = () => {
     };
   }, []);
 
-  const retryOperation = async (operation: () => Promise<any>) => {
-    try {
-      setError(null);
-      const result = await operation();
-      setRetryCount(0);
-      return result;
-    } catch (err) {
-      if (retryCount < maxRetries) {
-        setRetryCount(prev => prev + 1);
-        toast.error(`Operation failed. Retrying... (${retryCount + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
-        return retryOperation(operation);
-      } else {
-        setError(err instanceof Error ? err.message : 'Operation failed');
-        toast.error('Maximum retry attempts reached');
-        throw err;
-      }
-    }
-  };
-
   const handleSearch = async () => {
     if (!query.trim()) {
       setIsSearching(false);
@@ -182,8 +269,10 @@ const SearchInterface = () => {
     
     try {
       const response = await searchApi.textSearch(query);
+      console.log('Search response:', response);
+      
       if (response && response.results) {
-        setDisplayedItems(response.results.map((result) => ({
+        const mappedResults: SearchResult[] = response.results.map((result) => ({
           id: result.product.id,
           title: result.product.title,
           brand: result.product.brand,
@@ -193,13 +282,18 @@ const SearchInterface = () => {
           category: result.product.category,
           imageUrl: result.product.image_url,
           description: result.product.description
-        })));
-        toast.success('Search completed successfully');
+        }));
+        
+        console.log('Mapped search results:', mappedResults);
+        setDisplayedItems(mappedResults);
+        toast.success(`Found ${response.total_results} results in ${response.search_time.toFixed(2)}s`);
       } else {
-        throw new Error('Search failed');
+        throw new Error('Search returned no results');
       }
     } catch (error) {
       console.error('Search error:', error);
+      toast.error('Search failed, showing local results');
+      
       // Fallback to local search
       const searchTerm = query.toLowerCase();
       const searchResults = defaultCatalog.filter(item => 
@@ -211,7 +305,6 @@ const SearchInterface = () => {
         similarity: calculateSimilarity(item, searchTerm)
       }));
       setDisplayedItems(searchResults);
-      toast.warning('Falling back to local search');
     } finally {
       setIsLoading(false);
     }
@@ -236,19 +329,30 @@ const SearchInterface = () => {
       setIsLoading(true);
       
       try {
-        const imageSearchOperation = async () => {
-          const results = await searchApi.imageSearch(file);
-          if (results) {
-            setDisplayedItems(results);
-            toast.success('Image search completed successfully');
-          } else {
-            throw new Error('Image search failed');
-          }
-        };
-
-        await retryOperation(imageSearchOperation);
+        const response = await searchApi.imageSearch(file);
+        console.log('Image search response:', response);
+        
+        if (response && response.results) {
+          const mappedResults: SearchResult[] = response.results.map((result) => ({
+            id: result.product.id,
+            title: result.product.title,
+            brand: result.product.brand,
+            price: result.product.price,
+            similarity: result.similarity_score,
+            color: result.product.color,
+            category: result.product.category,
+            imageUrl: result.product.image_url,
+            description: result.product.description
+          }));
+          
+          setDisplayedItems(mappedResults);
+          toast.success('Image search completed successfully');
+        } else {
+          throw new Error('Image search failed');
+        }
       } catch (error) {
         console.error('Image search error:', error);
+        toast.error('Image search failed, showing sample results');
         // Fallback to mock results
         const mockResults = defaultCatalog
           .slice(0, 3)
@@ -257,7 +361,6 @@ const SearchInterface = () => {
             similarity: Math.random() * 0.3 + 0.7
           }));
         setDisplayedItems(mockResults);
-        toast.warning('Falling back to sample results');
       } finally {
         setIsLoading(false);
       }
@@ -278,30 +381,43 @@ const SearchInterface = () => {
   
         mediaRecorder.onstop = async () => {
           const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-          
           setIsSearching(true);
           setIsLoading(true);
   
           try {
-            // Create the AudioContext instance
             const audioContext = new AudioContext();
-  
-            // Convert the WebM file to a WAVE (RIFF) format
             const wavFile = await convertToWAV(audioBlob, audioContext);
             const response = await searchApi.audioSearch(wavFile, 5);
-            setDisplayedItems(response.results);
-            toast.success('Voice search completed successfully');
+            
+            if (response && response.results) {
+              const mappedResults: SearchResult[] = response.results.map((result) => ({
+                id: result.product.id,
+                title: result.product.title,
+                brand: result.product.brand,
+                price: result.product.price,
+                similarity: result.similarity_score,
+                color: result.product.color,
+                category: result.product.category,
+                imageUrl: result.product.image_url,
+                description: result.product.description
+              }));
+              
+              setDisplayedItems(mappedResults);
+              toast.success('Voice search completed successfully');
+            } else {
+              throw new Error('Voice search failed');
+            }
           } catch (error) {
             console.error('Voice search error:', error);
+            toast.error('Voice search failed, showing sample results');
             // Fallback to mock results
             const mockResults = defaultCatalog
               .slice(0, 2)
-              .map((item) => ({
+              .map(item => ({
                 ...item,
-                similarity: Math.random() * 0.3 + 0.7,
+                similarity: Math.random() * 0.3 + 0.7
               }));
             setDisplayedItems(mockResults);
-            toast.warning('Falling back to sample results');
           } finally {
             setIsLoading(false);
           }
@@ -321,7 +437,7 @@ const SearchInterface = () => {
       toast.info('Recording stopped');
     }
   };
-  
+
   const convertToWAV = async (audioBlob: Blob, audioContext: AudioContext): Promise<Blob> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -345,121 +461,8 @@ const SearchInterface = () => {
       reader.readAsArrayBuffer(audioBlob);
     });
   };
-  
-  const resampleAudio = async (
-    audioBuffer: AudioBuffer,
-    targetSampleRate: number,
-    audioContext: AudioContext
-  ): Promise<AudioBuffer> => {
-    // ... (existing resampleAudio function implementation)
-    const originalSampleRate = audioBuffer.sampleRate;
-    const targetLength = Math.round((audioBuffer.length * targetSampleRate) / originalSampleRate);
-    const resampled = audioContext.createBuffer(
-      audioBuffer.numberOfChannels,
-      targetLength,
-      targetSampleRate
-    );
-  
-    for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
-      const channelData = audioBuffer.getChannelData(channel);
-      const resampledData = await new Promise<Float32Array>((resolve) => {
-        resampleChannel(channelData, originalSampleRate, targetSampleRate, resolve);
-      });
-      resampled.copyToChannel(resampledData, channel);
-    }
-  
-    return resampled;
-  };
-  
-  const resampleChannel = (
-    channelData: Float32Array,
-    originalSampleRate: number,
-    targetSampleRate: number,
-    callback: (resampledData: Float32Array) => void
-  ) => {
-    const resampledLength = Math.round((channelData.length * targetSampleRate) / originalSampleRate);
-    const resampledData = new Float32Array(resampledLength);
-    const ratio = originalSampleRate / targetSampleRate;
-  
-    for (let i = 0; i < resampledLength; i++) {
-      const position = i * ratio;
-      const beforeIndex = Math.floor(position);
-      const afterIndex = Math.ceil(position);
-      const beforeRatio = afterIndex - position;
-      const afterRatio = position - beforeIndex;
-  
-      if (beforeIndex >= 0 && beforeIndex < channelData.length) {
-        resampledData[i] += channelData[beforeIndex] * beforeRatio;
-      }
-      if (afterIndex >= 0 && afterIndex < channelData.length) {
-        resampledData[i] += channelData[afterIndex] * afterRatio;
-      }
-    }
-  
-    callback(resampledData);
-  };
-
-  const FloatTo16BitPCM = (input: Float32Array) => {
-    const tmpBuffer = new Int16Array(input.length);
-    let maxValue = Math.max(1, Math.max(...input.map(Math.abs)));
-    input.forEach((val, idx) => {
-      tmpBuffer[idx] = Math.round((val / maxValue) * 32767);
-    });
-    return tmpBuffer;
-  };
-  const encodeWAV = (audioBuffer: AudioBuffer): Promise<ArrayBuffer> => {
-    return new Promise((resolve, reject) => {
-      const numChannels = audioBuffer.numberOfChannels;
-      const sampleRate = audioBuffer.sampleRate;
-      const sampleBits = 16;
-      const bytesPerSample = sampleBits / 8;
-      const blockAlign = numChannels * bytesPerSample;
-      const dataByteLength = audioBuffer.length * blockAlign;
-      const buffer = new ArrayBuffer(44 + dataByteLength);
-      const view = new DataView(buffer);
-  
-      // Write WAVE header
-      setUint32(view, 0, 0x46464952); // "RIFF"
-      setUint32(view, 4, 36 + dataByteLength); // WAVE chunk size
-      setUint32(view, 8, 0x45564157); // "WAVE"
-      setUint32(view, 12, 0x20746D66); // "fmt " chunk
-      setUint32(view, 16, 16); // fmt chunk size
-      setUint16(view, 20, 1); // audio format (1 = PCM)
-      setUint16(view, 22, numChannels);
-      setUint32(view, 24, sampleRate);
-      setUint32(view, 28, sampleRate * blockAlign); // byte rate
-      setUint16(view, 32, blockAlign); // block align
-      setUint16(view, 34, sampleBits); // bits per sample
-      setUint32(view, 36, 0x61746164); // "data" chunk
-      setUint32(view, 40, dataByteLength); // data chunk size
-  
-      // Write audio data
-      for (let channel = 0; channel < numChannels; channel++) {
-        const samples = audioBuffer.getChannelData(channel);
-        const pcmData = FloatTo16BitPCM(samples);
-        let offset = 44 + channel * 2;
-        for (let i = 0; i < pcmData.length; i++, offset += 2) {
-          setUint16(view, offset, pcmData[i]);
-        }
-      }
-  
-      resolve(buffer);
-    });
-  };
-  
-  const setUint16 = (view: DataView, offset: number, value: number) => {
-    view.setUint16(offset, value, true); // Little-endian
-  };
-  
-  const setUint32 = (view: DataView, offset: number, value: number) => {
-    view.setUint32(offset, value, true); // Little-endian
-  };
 
   const applyFilters = (items: SearchResult[]) => {
-    if (!Array.isArray(items)) {
-      return []; // Return an empty array if items is not an array
-    }
-  
     return items.filter(item => {
       const matchesBrand = !selectedBrand || item.brand === selectedBrand;
       const matchesPrice = item.price >= priceRange[0] && item.price <= priceRange[1];
@@ -482,20 +485,6 @@ const SearchInterface = () => {
     });
   };
 
-  const handleRetry = async () => {
-    setRetryCount(0);
-    setError(null);
-    if (searchType === 'text') {
-      await handleSearch();
-    } else if (imagePreview && searchType === 'image') {
-      // Retry image search
-      const response = await fetch(imagePreview);
-      const blob = await response.blob();
-      const file = new File([blob], 'image.jpg', { type: 'image/jpeg' });
-      await handleImageUpload(file);
-    }
-  };
-
   const filteredAndSortedItems = applySorting(applyFilters(displayedItems));
 
   return (
@@ -504,27 +493,32 @@ const SearchInterface = () => {
       <div className="p-4 md:p-8 max-w-6xl mx-auto">
         <h1 className="text-3xl font-bold mb-4">Product Search</h1>
 
-        {/* Search Input */}
         <Tabs defaultValue="text" className="mb-4" onValueChange={setSearchType}>
           <TabsList>
             <TabsTrigger value="text">Text</TabsTrigger>
             <TabsTrigger value="image">Image</TabsTrigger>
             <TabsTrigger value="voice">Voice</TabsTrigger>
           </TabsList>
+          
           <TabsContent value="text">
             <div className="flex items-center">
               <Input
                 type="text"
                 placeholder="Search products..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                value={query} onChange={(e) => setQuery(e.target.value)}
                 className="flex-grow"
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    handleSearch();
+                  }
+                }}
               />
               <Button onClick={handleSearch} className="ml-2">
                 <Search className="w-4 h-4" />
               </Button>
             </div>
           </TabsContent>
+
           <TabsContent value="image">
             <div className="flex items-center">
               <Input
@@ -538,22 +532,27 @@ const SearchInterface = () => {
               </Button>
             </div>
             {imagePreview && (
-              <img src={imagePreview} alt="Uploaded" className="mt-4 max-w-xs" />
+              <img src={imagePreview} alt="Preview" className="mt-4 max-w-xs rounded-lg" />
             )}
           </TabsContent>
+
           <TabsContent value="voice">
             <div className="flex items-center">
               <Button
                 onClick={handleVoiceRecording}
-                className={isRecording ? 'animate-pulse bg-red-500 hover:bg-red-600' : ''}>
-                <Mic className="w-4 h-4" />
+                className={isRecording ? 'animate-pulse bg-red-500 hover:bg-red-600' : ''}
+              >
+                <Mic className="w-4 h-4 mr-2" />
                 {isRecording ? 'Recording...' : 'Record'}
               </Button>
             </div>
-              {audioUrl && (<audio src={audioUrl} controls className="mt-4" />)}
-              </TabsContent>
+            {audioUrl && (
+              <audio src={audioUrl} controls className="mt-4" />
+            )}
+          </TabsContent>
         </Tabs>
-              {/* Filter and Sort */}
+
+        {/* Filter and Sort */}
         <div className="flex items-center justify-between mb-4">
           <Button
             variant="outline"
@@ -564,8 +563,8 @@ const SearchInterface = () => {
             {showFilters ? 'Hide' : 'Show'} Filters
           </Button>
           
-          <Select value={selectedSort} onValueChange={(value) => setSelectedSort(value)}>
-            <SelectTrigger className="w-[150px]">
+          <Select value={selectedSort} onValueChange={setSelectedSort}>
+            <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Sort by..." />
             </SelectTrigger>
             <SelectContent>
@@ -577,7 +576,8 @@ const SearchInterface = () => {
             </SelectContent>
           </Select>
         </div>
-        {/* Filters */}
+
+        {/* Filters Panel */}
         {showFilters && (
           <div className="mb-8">
             <Card>
@@ -587,7 +587,7 @@ const SearchInterface = () => {
               <CardContent>
                 <div className="mb-4">
                   <label className="block font-medium mb-2">Brand</label>
-                  <Select value={selectedBrand} onValueChange={(value) => setSelectedBrand(value)}>
+                  <Select value={selectedBrand} onValueChange={setSelectedBrand}>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="All Brands" />
                     </SelectTrigger>
@@ -605,7 +605,7 @@ const SearchInterface = () => {
                   <label className="block font-medium mb-2">Price Range</label>
                   <Slider
                     value={priceRange}
-                    onValueChange={(value) => setPriceRange(value)}
+                    onValueChange={setPriceRange}
                     min={0}
                     max={1000}
                     step={50}
@@ -620,6 +620,7 @@ const SearchInterface = () => {
             </Card>
           </div>
         )}
+
         {/* Results Section */}
         <div className="mt-8">
           <h2 className="text-xl font-semibold mb-4">
@@ -680,20 +681,7 @@ const SearchInterface = () => {
             </Alert>
           )}
         </div>
-        {/* Error State with Retry */}
-        {error && (
-          <div className="mt-4">
-            <Alert variant="destructive">
-              <AlertDescription className="flex items-center justify-between">
-                <span>{error}</span>
-                <Button variant="outline" size="sm" onClick={handleRetry}>
-                  <RefreshCcw className="w-4 h-4 mr-2" />
-                  Retry
-                </Button>
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
+
         {/* Scroll to Top Button */}
         {showScrollTop && (
           <Button
@@ -708,4 +696,5 @@ const SearchInterface = () => {
     </div>
   );
 };
+
 export default SearchInterface;
