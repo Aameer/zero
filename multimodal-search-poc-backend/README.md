@@ -24,3 +24,10 @@ A FastAPI-based backend service that provides multimodal search capabilities for
 ```bash
 git clone https://github.com/yourusername/multimodal-search-poc-backend.git
 cd multimodal-search-poc-backend
+```
+
+2. How to run
+```bash
+cd /Users/aameer/Documents/Aameer/eco/zero/multimodal-search-poc-backend
+uvicorn app.main:app --host 0.0.0.0 --port 80
+```
