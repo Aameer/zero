@@ -29,5 +29,6 @@ cd multimodal-search-poc-backend
 2. How to run
 ```bash
 cd /Users/aameer/Documents/Aameer/eco/zero/multimodal-search-poc-backend
+source ~/Documents/Aameer/eco/venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 80
 ```
