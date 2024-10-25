@@ -47,15 +47,7 @@ const ProductDetailDialog = ({ product, isOpen, onClose }: ProductDetailDialogPr
             <DialogTitle className="text-xl md:text-2xl font-bold">
               {product.title}
             </DialogTitle>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onClose}
-              className="h-8 w-8 p-0 rounded-full hover:bg-gray-100"
-              aria-label="Close dialog"
-            >
-              <X className="h-4 w-4" />
-            </Button>
+            
           </div>
 
           {/* Content - Scrollable area */}
