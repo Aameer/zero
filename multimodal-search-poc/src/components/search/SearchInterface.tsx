@@ -14,6 +14,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Toaster, toast } from 'sonner';
 import { searchApi } from '@/services/searchApi';
+import ProductDetailDialog from './ProductDetailDialog';
+
 
 interface SearchResult {
   id: number;
@@ -199,6 +201,7 @@ const SearchInterface = () => {
   const [showFilters, setShowFilters] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [selectedProduct, setSelectedProduct] = useState<SearchResult | null>(null);
   const maxRetries = 3;
 
   const brands = ['Nike', 'Adidas', 'Under Armour', 'Puma'];
@@ -671,7 +674,10 @@ const SearchInterface = () => {
           ) : filteredAndSortedItems.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {filteredAndSortedItems.map((item) => (
-                <Card key={item.id} className="overflow-hidden">
+                <Card 
+                key={item.id} 
+                className="overflow-hidden cursor-pointer hover:shadow-lg transition-shadow"
+                onClick={() => setSelectedProduct(item)}>
                   <div className="aspect-square bg-gray-100">
                     <img
                       src={item.imageUrl}
@@ -707,6 +713,12 @@ const SearchInterface = () => {
             </Alert>
           )}
         </div>
+
+        <ProductDetailDialog
+          product={selectedProduct}
+          isOpen={!!selectedProduct}
+          onClose={() => setSelectedProduct(null)}
+        />
 
         {/* Scroll to Top Button */}
         {showScrollTop && (
