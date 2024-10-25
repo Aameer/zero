@@ -41,7 +41,7 @@ class SearchService:
         # Text embeddings
         print("Creating text embeddings...")
         product_texts = [
-            f"{p.title} {p.brand} {p.color} {p.description}"
+            f"{p.title} {p.brand} {p.description}"
             for p in self.products
         ]
         text_embeddings = self.text_model.encode(product_texts)
