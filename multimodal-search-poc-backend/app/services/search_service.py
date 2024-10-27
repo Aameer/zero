@@ -40,6 +40,7 @@ class SearchService:
     def _init_indexes(self):
         # Text embeddings
         print("Creating text embeddings...")
+        #TODO: add more attributes here.
         product_texts = [
             f"{p.title} {p.brand} {p.description}"
             for p in self.products
