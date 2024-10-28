@@ -1,5 +1,5 @@
 # Multimodal Search API
-
+# Copyright (c) 2024, Aameer Rafiq Wani
 A FastAPI-based backend service that provides multimodal search capabilities for e-commerce products using state-of-the-art AI models.
 
 ## Features
