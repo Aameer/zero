@@ -1,5 +1,5 @@
 # Zero: Multi-Modal Search POC
-
+# Copyright (c) 2024, Aameer Rafiq Wani
 A modern e-commerce search system supporting text, image, and voice search capabilities with a responsive UI.
 
 ## Features
