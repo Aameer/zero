@@ -64,7 +64,7 @@ class SearchService:
         faiss.normalize_L2(text_features)
         self.image_index.add(text_features.astype('float32'))
 
-    def search(self, query_type: SearchType, query: str, num_results: int = 5, min_similarity: float = 0.0) -> List[SearchResult]:
+    def search(self, query_type: SearchType, query: str, num_results: int = 5, min_similarity: float = 0.0) -> List[Product]:
         try:
             if query_type == SearchType.TEXT:
                 return self.text_search(query, num_results, min_similarity)
@@ -78,82 +78,65 @@ class SearchService:
             print(f"Error in search: {str(e)}")
             raise
 
-    def text_search(self, query: str, num_results: int = 5, min_similarity: float = 0.0) -> List[SearchResult]:
+    # Modify the return type in the search methods
+    def text_search(self, query: str, num_results: int = 5, min_similarity: float = 0.0) -> List[Product]:
         try:
-            # Generate embedding for the query
             print(f"Processing text query: {query}")
             query_embedding = self.text_model.encode([query])
             faiss.normalize_L2(query_embedding)
 
-            # Search the index
             similarities, indices = self.text_index.search(query_embedding.astype('float32'), num_results)
 
-            # Filter and format results
             results = []
             for similarity, idx in zip(similarities[0], indices[0]):
                 if similarity >= min_similarity and idx < len(self.products):
-                    results.append(SearchResult(
-                        product=self.products[idx],
-                        similarity_score=float(similarity)
-                    ))
+                    results.append(self.products[idx])
 
             print(f"Found {len(results)} results for text search")
-            return results
+            return results  # Returning Product objects directly
         except Exception as e:
             print(f"Error in text search: {str(e)}")
             raise
 
-    def image_search(self, image_data: bytes, num_results: int = 5, min_similarity: float = 0.0) -> List[SearchResult]:
+    def image_search(self, image_data: bytes, num_results: int = 5, min_similarity: float = 0.0) -> List[Product]:
         try:
-            # Process image
             print("Processing image query...")
             image = Image.open(io.BytesIO(image_data))
             inputs = self.image_processor(images=image, return_tensors="pt")
 
-            # Generate image embedding
             with torch.no_grad():
                 image_features = self.image_model.get_image_features(**inputs)
 
-            # Normalize and search
             image_features = image_features.cpu().numpy()
             faiss.normalize_L2(image_features)
 
             similarities, indices = self.image_index.search(image_features.astype('float32'), num_results)
 
-            # Filter and format results
             results = []
             for similarity, idx in zip(similarities[0], indices[0]):
                 if similarity >= min_similarity and idx < len(self.products):
-                    results.append(SearchResult(
-                        product=self.products[idx],
-                        similarity_score=float(similarity)
-                    ))
+                    results.append(self.products[idx])
 
             print(f"Found {len(results)} results for image search")
-            return results
+            return results  # Returning Product objects directly
         except Exception as e:
             print(f"Error in image search: {str(e)}")
             raise
 
-    def audio_search(self, audio_bytes: bytes, num_results: int = 5, min_similarity: float = 0.0) -> List[SearchResult]:
+    def audio_search(self, audio_bytes: bytes, num_results: int = 5, min_similarity: float = 0.0) -> List[Product]:
         try:
             print("Processing audio query...")
-            # Convert audio bytes to tensor
             rate, audio_data = wavfile.read(io.BytesIO(audio_bytes))
 
-            # Convert to float32 if needed
             if audio_data.dtype == np.int16:
                 audio_data = audio_data.astype(np.float32) / 32768.0
 
-            # Prepare audio input for Whisper
             input_features = self.audio_processor(
                 audio_data,
                 sampling_rate=rate,
                 return_tensors="pt"
             ).input_features
 
-            # Generate transcription
-            print("Transcribing audio...")
             with torch.no_grad():
                 predicted_ids = self.audio_model.generate(input_features)
                 transcription = self.audio_processor.batch_decode(
@@ -163,9 +146,7 @@ class SearchService:
 
             print(f"Transcribed Audio: {transcription}")
 
-            # Use the transcribed text for searching
             return self.text_search(transcription, num_results, min_similarity)
-
         except Exception as e:
             print(f"Error in audio search: {str(e)}")
             raise RuntimeError(f"Error processing audio: {str(e)}")

@@ -12,7 +12,7 @@ class Attribute(BaseModel):
     Size: str
 
 class Product(BaseModel):
-    id: UUID
+    id: str #UUID
     title: str
     brand: str
     price: float
@@ -46,6 +46,6 @@ class SearchResult(BaseModel):
     similarity_score: float
 
 class SearchResponse(BaseModel):
-    results: List[SearchResult]
+    results: List[Product]
     total_results: int
     search_time: float

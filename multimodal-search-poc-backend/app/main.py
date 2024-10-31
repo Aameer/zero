@@ -44,7 +44,7 @@ async def get_products():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/search", response_model=SearchResponse)
+@app.post("/search", response_model=List[Product])
 async def search(query: SearchQuery):
     if not search_service:
         raise HTTPException(status_code=500, detail="Search service not initialized")
@@ -58,12 +58,13 @@ async def search(query: SearchQuery):
             min_similarity=query.min_similarity
         )
         search_time = time.time() - start_time
-
-        return SearchResponse(
-            results=results,
-            total_results=len(results),
-            search_time=search_time
-        )
+        print(len(results), search_time)
+        return results
+        #return SearchResponse(
+        #    results=results,
+        #    total_results=len(results),
+        #    search_time=search_time
+        #)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -81,12 +82,12 @@ async def image_search(
         contents = await file.read()
         results = search_service.image_search(contents, num_results, min_similarity)
         search_time = time.time() - start_time
-
-        return SearchResponse(
-            results=results,
-            total_results=len(results),
-            search_time=search_time
-        )
+        return results
+        #return SearchResponse(
+        #    results=results,
+        #    total_results=len(results),
+        #    search_time=search_time
+        #)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -104,12 +105,12 @@ async def audio_search(
         contents = await file.read()
         results = search_service.audio_search(contents, num_results, min_similarity)
         search_time = time.time() - start_time
-
-        return SearchResponse(
-            results=results,
-            total_results=len(results),
-            search_time=search_time
-        )
+        return results
+        #return SearchResponse(
+        #    results=results,
+        #    total_results=len(results),
+        #    search_time=search_time
+        #)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
