@@ -18,7 +18,7 @@ interface APIResponse {
   search_time: number;
 }
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://localhost:9000';
 
 export const searchApi = {
   async getAllProducts() {

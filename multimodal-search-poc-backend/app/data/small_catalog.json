@@ -1,0 +1,58 @@
+[
+    {
+        "id": "0031665f-2984-4b49-856f-50cf85406067",
+        "title": "BLACK LAWN 2PC PRINTED STITCHED | JJPW-JW2-S-24-7003",
+        "brand": "Junaid Jamshed",
+        "price": 4667,
+        "attributes": [
+            {
+                "Color": "Black"
+            },
+            {
+                "Season": "Midsummer Collection"
+            },
+            {
+                "Product Category": "2 Piece Stitched"
+            },
+            {
+                "Fabric": "Lawn"
+            }
+        ],
+        "category": "Midsummer Collection",
+        "description": "Collection: Printed Shirt With Printed Dobby Dupatta\nWear Type: Casual\nFabric Type: Liminal\nNeckline: Round\nShirt Front: Printed\nShirt Back: Printed\nSleeves: Printed\nStyle Cut: Staright\nEmbel",
+        "image_url": [
+            "https://www.junaidjamshed.com/media/catalog/product/j/w/jw2-24-7003_1_.jpg?quality=80&bg-color=255,255,255&fit=bounds&height=&width=",
+            "https://www.junaidjamshed.com/media/catalog/product/j/w/jw2-24-7003_3_.jpg?quality=80&bg-color=255,255,255&fit=bounds&height=&width=",
+            "https://www.junaidjamshed.com/media/catalog/product/j/w/jw2-24-7003_2_.jpg?quality=80&bg-color=255,255,255&fit=bounds&height=&width="
+        ]
+    },
+    {
+        "id": "0071d041-df7f-47d4-a710-20fba1733e33",
+        "title": "MS22ESE215",
+        "brand": "Sana Safinaz",
+        "price": 3959,
+        "attributes": [
+            {
+                "Fabric": "Cotton Jacquard"
+            },
+            {
+                "Slip": "Not Included"
+            },
+            {
+                "Color": "Light Blue"
+            },
+            {
+                "Description": "One can never go wrong with blue. This lovely shirt with beautiful printing and cute striped patti detailing is easy to style and easier to fall for."
+            },
+            {
+                "Cut": "Boxy"
+            }
+        ],
+        "category": "Stitched",
+        "description": "One can never go wrong with blue. This lovely shirt with beautiful printing and cute striped patti detailing is easy to style and easier to fall for.\nColor: Light Blue\nCut: Boxy\nFabric: Cotto",
+        "image_url": [
+            "https://www.sanasafinaz.com/media/catalog/product/m/s/ms22ese215_1.jpg?optimize=medium&bg-color=255,255,255&fit=bounds&height=&width=",
+            "https://www.sanasafinaz.com/media/catalog/product/m/s/ms22ese215_2_.jpg?optimize=medium&bg-color=255,255,255&fit=bounds&height=&width=",
+            "https://www.sanasafinaz.com/media/catalog/product/m/s/ms22ese215_1_.jpg?optimize=medium&bg-color=255,255,255&fit=bounds&height=&width="
+        ]
+    }
