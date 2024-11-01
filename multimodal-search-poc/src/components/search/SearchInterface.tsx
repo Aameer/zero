@@ -230,7 +230,7 @@ const SearchInterface = () => {
   const [showScrollTop, setShowScrollTop] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
-  const brands = ['Nike', 'Adidas', 'Under Armour', 'Puma'];
+  const brands = ['Sana Safinaz', 'Junaid Jamshed'];
   const sortOptions = [
     { value: 'relevance', label: 'Most Relevant' },
     { value: 'price_asc', label: 'Price: Low to High' },
@@ -242,6 +242,11 @@ const SearchInterface = () => {
     const fetchProducts = async () => {
       try {
         setInitialLoading(true);
+
+        // Fetch the list of available brands and initialize the selectedBrand state
+        // TODO: this should ideally come from users preferences.
+        setSelectedBrand(brands[0]);
+
         const response = await searchApi.getAllProducts();
         console.log('Initial products response:', response);
         if (response && Array.isArray(response)) {  // Changed from response.data
@@ -498,11 +503,13 @@ const SearchInterface = () => {
     if (!items || !Array.isArray(items)) return [];
     
     return items.filter(item => {
-      const matchesBrand = !selectedBrand || item.brand === selectedBrand;
+      const matchesBrand =
+        selectedBrand === '' || selectedBrand === 'All Brands' || item.brand === selectedBrand;
       const matchesPrice = item.price >= priceRange[0] && item.price <= priceRange[1];
       return matchesBrand && matchesPrice;
     });
   };
+
 
   // And update applySorting to handle empty data better:
   const applySorting = (items: SearchResult[]) => {
@@ -639,8 +646,7 @@ const SearchInterface = () => {
                       <SelectValue placeholder="All Brands" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">All Brands</SelectItem>
-                      {brands.map(brand => (
+                      {brands.map((brand) => (
                         <SelectItem key={brand} value={brand}>
                           {brand}
                         </SelectItem>
