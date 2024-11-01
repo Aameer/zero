@@ -308,6 +308,7 @@ const SearchInterface = () => {
     try {
       const response = await searchApi.textSearch(query);
       console.log('Search response: below one', response);
+      
       if (Array.isArray(response)) {
         const mappedResults: SearchResult[] = response.map((product: any) => ({
           id: product.id || String(Math.random()),
@@ -366,40 +367,28 @@ const SearchInterface = () => {
         
         const response = await searchApi.imageSearch(file);
         console.log('Image search response:', response);
-        
-        if (response && response.results) {
-          const mappedResults: SearchResult[] = response.results.map((result) => ({
-            id: result.product.id,
-            title: result.product.title,
-            brand: result.product.brand,
-            price: result.product.price,
-            similarity: result.similarity_score,
-            color: result.product.color,
-            category: result.product.category,
-            imageUrl: result.product.image_url,
-            description: result.product.description
+        if (response) {
+          const mappedResults: SearchResult[] = response.map((product: any) => ({
+            id: product.id || String(Math.random()),
+            title: product.title || '',
+            brand: product.brand || '',
+            price: product.price || 0,
+            attributes: Array.isArray(product.attributes) ? product.attributes : [],
+            category: product.category || '',
+            description: product.description || '',
+            image_url: Array.isArray(product.image_url) ? product.image_url : []
           }));
-          
+          console.log("image mappedResults", mappedResults)
           setDisplayedItems(mappedResults);
-          toast.success(`Found ${response.total_results} similar products`);
+          toast.success(`Found ${mappedResults.length} results`);
         }
       } catch (error) {
         console.error('Image search error:', error);
         toast.error('Image search failed, showing sample results');
-        
-        // Fallback to mock results
-        const mockResults = defaultCatalog
-          .slice(0, 3)
-          .map(item => ({
-            ...item,
-            similarity: Math.random() * 0.3 + 0.7
-          }));
-        setDisplayedItems(mockResults);
       } finally {
         setIsLoading(false);
       }
     };
-  
     reader.onerror = () => {
       toast.error('Error reading image file');
       setIsLoading(false);
@@ -429,19 +418,28 @@ const SearchInterface = () => {
             const wavFile = await convertToWAV(audioBlob, audioContext);
             const response = await searchApi.audioSearch(wavFile, 5);
             
-            if (response && response.results) {
-              const mappedResults: SearchResult[] = response.results.map((result) => ({
-                id: result.product.id,
-                title: result.product.title,
-                brand: result.product.brand,
-                price: result.product.price,
-                similarity: result.similarity_score,
-                color: result.product.color,
-                category: result.product.category,
-                imageUrl: result.product.image_url,
-                description: result.product.description
+            if (response) {
+              // const mappedResults: SearchResult[] = response.results.map((result) => ({
+              //   id: result.product.id,
+              //   title: result.product.title,
+              //   brand: result.product.brand,
+              //   price: result.product.price,
+              //   similarity: result.similarity_score,
+              //   color: result.product.color,
+              //   category: result.product.category,
+              //   imageUrl: result.product.image_url,
+              //   description: result.product.description
+              // }));
+              const mappedResults: SearchResult[] = response.map((product: any) => ({
+                id: product.id || String(Math.random()),
+                title: product.title || '',
+                brand: product.brand || '',
+                price: product.price || 0,
+                attributes: Array.isArray(product.attributes) ? product.attributes : [],
+                category: product.category || '',
+                description: product.description || '',
+                image_url: Array.isArray(product.image_url) ? product.image_url : []
               }));
-              
               setDisplayedItems(mappedResults);
               toast.success('Voice search completed successfully');
             } else {
@@ -450,14 +448,6 @@ const SearchInterface = () => {
           } catch (error) {
             console.error('Voice search error:', error);
             toast.error('Voice search failed, showing sample results');
-            // Fallback to mock results
-            const mockResults = defaultCatalog
-              .slice(0, 2)
-              .map(item => ({
-                ...item,
-                similarity: Math.random() * 0.3 + 0.7
-              }));
-            setDisplayedItems(mockResults);
           } finally {
             setIsLoading(false);
           }

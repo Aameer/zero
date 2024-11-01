@@ -36,7 +36,7 @@ export const searchApi = {
     return response.data; // Return the data directly
   },
 
-  async imageSearch(file: File): Promise<APIResponse> {
+  async imageSearch(file: File): Promise<any[]> {
     const formData = new FormData();
     formData.append('file', file); // Changed from 'image' to 'file'
     
