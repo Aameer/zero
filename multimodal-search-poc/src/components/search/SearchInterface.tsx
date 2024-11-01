@@ -1,4 +1,3 @@
-// src/components/search/SearchInterface.tsx
 "use client"
 
 import { useState, useEffect, useRef } from 'react';
@@ -11,48 +10,78 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Toaster, toast } from 'sonner';
 import { searchApi } from '@/services/searchApi';
 import ProductDetailDialog from './ProductDetailDialog';
 
 
 interface SearchResult {
-  id: number;
+  id: string;
   title: string;
   brand: string;
   price: number;
-  similarity: number;
-  color: string;
+  similarity?: number;
+  attributes: ProductAttribute[];
   category: string;
-  imageUrl: string;
   description: string;
+  image_url: string[];
 }
 
-const defaultCatalog: SearchResult[] = [
-  {
-    id: 1,
-    title: "Classic White T-Shirt",
-    brand: "Nike",
-    price: 29.99,
-    similarity: 1,
-    color: "White",
-    category: "T-Shirts",
-    imageUrl: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400&h=400&fit=crop",
-    description: "Comfortable cotton t-shirt for everyday wear."
-  },
-  {
-    id: 2,
-    title: "Running Shoes Pro",
-    brand: "Adidas",
-    price: 129.99,
-    similarity: 1,
-    color: "Black",
-    category: "Shoes",
-    imageUrl: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&h=400&fit=crop",
-    description: "Professional running shoes with advanced cushioning."
-  },
-];
+interface ProductAttribute {
+  [key: string]: string;
+}
+
+// Update the ProductCard component's image handling
+const ProductCard = ({ item, onClick }: { item: SearchResult; onClick: () => void }) => {
+  // Get the first image URL, with fallback to a placeholder
+  const primaryImageUrl = item.image_url && item.image_url.length > 0
+    ? item.image_url[0]
+    : '/api/placeholder/400/400';
+
+  // Get remaining images count
+  const remainingImages = Array.isArray(item.image_url) ? Math.max(0, item.image_url.length - 1) : 0;
+
+  return (
+    <Card 
+      className="overflow-hidden cursor-pointer hover:shadow-lg transition-shadow"
+      onClick={onClick}
+    >
+      <div className="aspect-square bg-gray-100 relative">
+        <img
+          src={primaryImageUrl}
+          alt={item.title}
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+        {remainingImages > 0 && (
+          <Badge 
+            variant="secondary" 
+            className="absolute bottom-2 right-2"
+          >
+            +{remainingImages}
+          </Badge>
+        )}
+      </div>
+      <CardContent className="p-4">
+        <h3 className="font-semibold text-lg mb-2 line-clamp-2">{item.title}</h3>
+        <div className="flex items-center justify-between mb-2">
+          <Badge variant="secondary">{item.brand}</Badge>
+          <span className="font-bold text-lg">Rs. {item.price.toLocaleString()}</span>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          {item.attributes?.slice(0, 2).map((attr, index) => {
+            const [key, value] = Object.entries(attr)[0];
+            return (
+              <Badge key={index} variant="outline">
+                {value}
+              </Badge>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
 
 const ProductSkeleton = () => (
   <div className="animate-pulse">
@@ -183,26 +212,23 @@ const writeString = (view: DataView, offset: number, string: string): void => {
   }
 };
 const SearchInterface = () => {
+  const [initialLoading, setInitialLoading] = useState(true);
   const [searchType, setSearchType] = useState('text');
   const [query, setQuery] = useState('');
   const [isRecording, setIsRecording] = useState(false);
-  const [displayedItems, setDisplayedItems] = useState<SearchResult[]>([]);
+  const [displayedItems, setDisplayedItems] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
+  const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
   const [priceRange, setPriceRange] = useState([0, 1000]);
   const [selectedBrand, setSelectedBrand] = useState('');
   const [selectedSort, setSelectedSort] = useState('relevance');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
-  const [showScrollTop, setShowScrollTop] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [selectedProduct, setSelectedProduct] = useState<SearchResult | null>(null);
-  const maxRetries = 3;
 
   const brands = ['Nike', 'Adidas', 'Under Armour', 'Puma'];
   const sortOptions = [
@@ -213,101 +239,96 @@ const SearchInterface = () => {
   ];
 
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    const handleScroll = () => setShowScrollTop(window.pageYOffset > 300);
-  
     const fetchProducts = async () => {
       try {
         setInitialLoading(true);
-        console.log('Fetching products...');
         const response = await searchApi.getAllProducts();
-        console.log('Products received:', response.data);
-        
-        if (response && response.data) {
-          const products: SearchResult[] = response.data.map((product: any) => ({
-            id: product.id,
-            title: product.title,
-            brand: product.brand,
-            price: product.price,
-            similarity: 1,
-            color: product.color,
-            category: product.category,
-            imageUrl: product.image_url,
-            description: product.description
+        console.log('Initial products response:', response);
+        if (response && Array.isArray(response)) {  // Changed from response.data
+          const products: SearchResult[] = response.map((product: any) => ({
+            id: product.id || String(Math.random()),
+            title: product.title || '',
+            brand: product.brand || '',
+            price: product.price || 0,
+            attributes: Array.isArray(product.attributes) ? product.attributes : [],
+            category: product.category || '',
+            description: product.description || '',
+            image_url: Array.isArray(product.image_url) ? product.image_url : []
           }));
           
-          console.log('Mapped products:', products);
           setDisplayedItems(products);
-          toast.success('Products loaded successfully');
+          toast.success(`Loaded ${products.length} products`);
+        } else {
+          throw new Error('Invalid response format');
         }
       } catch (error) {
         console.error('Error fetching products:', error);
-        toast.error('Failed to load products, showing sample data');
-        setDisplayedItems(defaultCatalog);
+        toast.error('Failed to load products');
+        setDisplayedItems([]);
       } finally {
         setInitialLoading(false);
       }
     };
   
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    window.addEventListener('scroll', handleScroll);
     fetchProducts();
-  
-    return () => {
-      window.removeEventListener('resize', checkMobile);
-      window.removeEventListener('scroll', handleScroll);
-    };
   }, []);
 
+  // Update your handleSearch function:
   const handleSearch = async () => {
     if (!query.trim()) {
-      setIsSearching(false);
-      setDisplayedItems(defaultCatalog);
+      try {
+        setIsLoading(true);
+        const response = await searchApi.getAllProducts();
+        console.log('Search response:', response);
+        if (response && Array.isArray(response)) {
+          const products: SearchResult[] = response.map((product: any) => ({
+            id: product.id || String(Math.random()),
+            title: product.title || '',
+            brand: product.brand || '',
+            price: product.price || 0,
+            attributes: Array.isArray(product.attributes) ? product.attributes : [],
+            category: product.category || '',
+            description: product.description || '',
+            image_url: Array.isArray(product.image_url) ? product.image_url : []
+          }));
+          setDisplayedItems(products);
+        }
+      } catch (error) {
+        console.error('Error fetching all products:', error);
+        toast.error('Failed to load products');
+      } finally {
+        setIsLoading(false);
+      }
       return;
     }
-  
+
     setIsLoading(true);
     setIsSearching(true);
     
     try {
       const response = await searchApi.textSearch(query);
-      console.log('Search response:', response);
-      
-      if (response && response.results) {
-        const mappedResults: SearchResult[] = response.results.map((result) => ({
-          id: result.product.id,
-          title: result.product.title,
-          brand: result.product.brand,
-          price: result.product.price,
-          similarity: result.similarity_score,
-          color: result.product.color,
-          category: result.product.category,
-          imageUrl: result.product.image_url,
-          description: result.product.description
+      console.log('Search response: below one', response);
+      if (Array.isArray(response)) {
+        const mappedResults: SearchResult[] = response.map((product: any) => ({
+          id: product.id || String(Math.random()),
+          title: product.title || '',
+          brand: product.brand || '',
+          price: product.price || 0,
+          attributes: Array.isArray(product.attributes) ? product.attributes : [],
+          category: product.category || '',
+          description: product.description || '',
+          image_url: Array.isArray(product.image_url) ? product.image_url : []
         }));
-        
-        console.log('Mapped search results:', mappedResults);
+        console.log(mappedResults)
         setDisplayedItems(mappedResults);
-        toast.success(`Found ${response.total_results} results in ${response.search_time.toFixed(2)}s`);
+        toast.success(`Found ${mappedResults.length} results`);
       } else {
-        throw new Error('Search returned no results');
+        throw new Error('Invalid response format');
       }
     } catch (error) {
       console.error('Search error:', error);
-      toast.error('Search failed, showing local results');
-      
-      // Fallback to local search
-      const searchTerm = query.toLowerCase();
-      const searchResults = defaultCatalog.filter(item => 
-        item.title.toLowerCase().includes(searchTerm) ||
-        item.brand.toLowerCase().includes(searchTerm) ||
-        item.category.toLowerCase().includes(searchTerm)
-      ).map(item => ({
-        ...item,
-        similarity: calculateSimilarity(item, searchTerm)
-      }));
-      setDisplayedItems(searchResults);
+      toast.error('Search failed');
+      setDisplayedItems([]);
     } finally {
       setIsLoading(false);
     }
@@ -481,7 +502,11 @@ const SearchInterface = () => {
     });
   };
 
+  // Also update the applyFilters function to handle empty data better:
   const applyFilters = (items: SearchResult[]) => {
+    console.log("filter on", items)
+    if (!items || !Array.isArray(items)) return [];
+    
     return items.filter(item => {
       const matchesBrand = !selectedBrand || item.brand === selectedBrand;
       const matchesPrice = item.price >= priceRange[0] && item.price <= priceRange[1];
@@ -489,22 +514,28 @@ const SearchInterface = () => {
     });
   };
 
+  // And update applySorting to handle empty data better:
   const applySorting = (items: SearchResult[]) => {
+    console.log("sorting on", items)
+    if (!items || !Array.isArray(items)) return [];
+
     return [...items].sort((a, b) => {
       switch (selectedSort) {
         case 'price_asc':
-          return a.price - b.price;
+          return (a.price || 0) - (b.price || 0);
         case 'price_desc':
-          return b.price - a.price;
+          return (b.price || 0) - (a.price || 0);
         case 'newest':
-          return b.id - a.id;
+          return parseInt(b.id) - parseInt(a.id);
         default:
-          return isSearching ? b.similarity - a.similarity : 0;
+          return (b.similarity || 0) - (a.similarity || 0);
       }
     });
   };
 
-  const filteredAndSortedItems = applySorting(applyFilters(displayedItems));
+  // TODO: The filters and sorting wasnt workign well so ignoring it for now. Need to come back to it later.
+  //const filteredAndSortedItems =  applySorting(applyFilters(displayedItems));
+  const filteredAndSortedItems =  displayedItems;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -520,19 +551,16 @@ const SearchInterface = () => {
           </TabsList>
           
           <TabsContent value="text">
-            <div className="flex items-center">
+            <div className="flex gap-2">
               <Input
                 type="text"
                 placeholder="Search products..."
-                value={query} onChange={(e) => setQuery(e.target.value)}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 className="flex-grow"
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    handleSearch();
-                  }
-                }}
               />
-              <Button onClick={handleSearch} className="ml-2">
+              <Button onClick={handleSearch} disabled={isLoading}>
                 <Search className="w-4 h-4" />
               </Button>
             </div>
@@ -659,68 +687,39 @@ const SearchInterface = () => {
             }
           </h2>
           
-          {initialLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-              {[1, 2, 3, 4, 5, 6].map((n) => (
-                <ProductSkeleton key={n} />
-              ))}
-            </div>
-          ) : isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+          {initialLoading || isLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3, 4, 5, 6].map((n) => (
                 <ProductSkeleton key={n} />
               ))}
             </div>
           ) : filteredAndSortedItems.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredAndSortedItems.map((item) => (
-                <Card 
-                key={item.id} 
-                className="overflow-hidden cursor-pointer hover:shadow-lg transition-shadow"
-                onClick={() => setSelectedProduct(item)}>
-                  <div className="aspect-square bg-gray-100">
-                    <img
-                      src={item.imageUrl}
-                      alt={item.title}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  </div>
-                  <CardContent className="p-4">
-                    <h3 className="font-semibold text-lg mb-2">{item.title}</h3>
-                    <div className="flex items-center justify-between mb-2">
-                      <Badge variant="secondary">{item.brand}</Badge>
-                      <span className="font-bold text-lg">${item.price.toFixed(2)}</span>
-                    </div>
-                    <div className="flex gap-2 flex-wrap">
-                      <Badge variant="outline">{item.color}</Badge>
-                      <Badge variant="outline">{item.category}</Badge>
-                    </div>
-                    {isSearching && (
-                      <div className="mt-2 text-sm text-gray-600">
-                        Match: {(item.similarity * 100).toFixed(1)}%
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                <ProductCard 
+                  key={item.id} 
+                  item={item} 
+                  onClick={() => setSelectedProduct(item)}
+                />
               ))}
             </div>
           ) : (
             <Alert>
               <AlertDescription>
-                No results found. Try adjusting your search or filters.
+                {error || 'No results found. Try adjusting your search or filters.'}
               </AlertDescription>
             </Alert>
           )}
         </div>
 
-        <ProductDetailDialog
-          product={selectedProduct}
-          isOpen={!!selectedProduct}
-          onClose={() => setSelectedProduct(null)}
-        />
+        {selectedProduct && (
+          <ProductDetailDialog
+            product={selectedProduct}
+            isOpen={!!selectedProduct}
+            onClose={() => setSelectedProduct(null)}
+          />
+        )}
 
-        {/* Scroll to Top Button */}
         {showScrollTop && (
           <Button
             className="fixed bottom-4 right-4 rounded-full"

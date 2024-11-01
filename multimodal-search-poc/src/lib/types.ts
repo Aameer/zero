@@ -6,11 +6,11 @@ export interface SearchResult {
   title: string;
   brand: string;
   price: number;
-  color: string;
+  similarity?: number;
+  attributes: Array<Record<string, string>>;
   category: string;
   description: string;
-  imageUrl: string;
-  similarity: number;
+  image_url: string[];
 }
 
 export interface SearchFilters {

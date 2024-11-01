@@ -23,17 +23,17 @@ const API_BASE_URL = 'http://localhost:9000';
 export const searchApi = {
   async getAllProducts() {
     const response = await axios.get(`${API_BASE_URL}/products`);
-    return response;
+    return response.data; // Return the data directly
   },
 
-  async textSearch(query: string): Promise<APIResponse> {
+  async textSearch(query: string): Promise<any[]> {
     const response = await axios.post(`${API_BASE_URL}/search`, {
       query_type: 'text',
       query: query,
       num_results: 10,
       min_similarity: 0.0
     });
-    return response.data;
+    return response.data; // Return the data directly
   },
 
   async imageSearch(file: File): Promise<APIResponse> {
