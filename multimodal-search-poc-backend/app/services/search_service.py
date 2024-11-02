@@ -5,35 +5,78 @@ from transformers import CLIPProcessor, CLIPModel
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 import faiss
 import numpy as np
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Tuple
 import io
 from PIL import Image
 from scipy.io import wavfile
 import logging
 from dataclasses import dataclass
 import soundfile as sf
-import io
 import librosa
+import requests
+from datetime import datetime
+from functools import lru_cache
+import json
+from collections import defaultdict
+import Levenshtein  # for fuzzy matching
 
 from app.models.schemas import SearchType, SearchResult, Product, UserPreferences
 
 logger = logging.getLogger(__name__)
+
+class SeasonalWeights:
+    """Seasonal weightings for product relevance"""
+    SEASONS = {
+        'SPRING': {'months': [3, 4, 5], 'boost': 1.3},
+        'SUMMER': {'months': [6, 7, 8], 'boost': 1.3},
+        'FALL': {'months': [9, 10, 11], 'boost': 1.3},
+        'WINTER': {'months': [12, 1, 2], 'boost': 1.3}
+    }
+
+    @staticmethod
+    def get_current_season() -> str:
+        current_month = datetime.now().month
+        for season, data in SeasonalWeights.SEASONS.items():
+            if current_month in data['months']:
+                return season
+        return 'NONE'
+
+class SearchWeights:
+    """Configuration for various search weight factors"""
+    BASE_WEIGHTS = {
+        'similarity': 1.0,
+        'brand': 0.8,
+        'price': 0.6,
+        'color': 0.7,
+        'category': 0.5,
+        'seasonal': 0.4,
+        'attribute': 0.3
+    }
+
+    COLOR_SIMILARITY = {
+        'pink': ['rose', 'magenta', 'fuchsia'],
+        'red': ['maroon', 'crimson', 'scarlet'],
+        'blue': ['navy', 'azure', 'cobalt'],
+        # Add more color mappings
+    }
 
 class EnhancedSearchService:
     def __init__(self, catalog: List[Dict]):
         """Initialize the enhanced search service with multiple models and indexes"""
         self.catalog = catalog
         self.products = [Product(**p) for p in catalog]
+        self.cache = {}  # Simple cache for embeddings
 
         # Initialize models with error handling
         self._initialize_models()
 
-        # Initialize indexes
+        # Initialize indexes and cache
         self._init_multimodal_indexes()
+        self._init_attribute_indexes()
         logger.info("Search service initialization complete!")
 
     def _initialize_models(self):
-        """Initialize all required models with proper error handling"""
+        """Initialize all required models with error handling"""
         try:
             logger.info("Initializing text model...")
             self.text_model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -55,44 +98,91 @@ class EnhancedSearchService:
             logger.error(f"Error initializing models: {str(e)}")
             raise RuntimeError(f"Failed to initialize models: {str(e)}")
 
-    def _init_multimodal_indexes(self):
-        """Initialize combined text and image embeddings index"""
+    async def _init_multimodal_indexes(self):
+        """Initialize combined text and image embeddings index with actual images"""
         try:
             logger.info("Creating multimodal embeddings...")
 
-            # Create text embeddings
-            product_texts = [
-                f"{p.title} {p.brand} {p.description} {' '.join([str(attr) for attr in p.attributes])}"
-                for p in self.products
-            ]
-            text_embeddings = self.text_model.encode(product_texts)
+            # Create text embeddings with attribute awareness
+            product_texts = []
+            for p in self.products:
+                # Combine all product information including attributes
+                attribute_text = ' '.join([
+                    f"{key} {value}"
+                    for attr in p.attributes
+                    for key, value in attr.items()
+                ])
+                text = f"{p.title} {p.brand} {p.description} {attribute_text}"
+                product_texts.append(text)
 
-            # Create CLIP embeddings from product descriptions and images
+            # Get text embeddings
+            logger.info("Computing text embeddings...")
+            text_embeddings = self._get_cached_embeddings(
+                'text_embeddings',
+                lambda: self.text_model.encode(product_texts)
+            )
+
+            # Process product images in batches
+            logger.info("Processing product images...")
             clip_embeddings = []
-            for product in self.products:
-                try:
-                    # Process text descriptions with CLIP
-                    inputs = self.clip_processor(
-                        text=[product.description],
-                        return_tensors="pt",
-                        padding=True
-                    )
-                    with torch.no_grad():
-                        clip_embedding = self.clip_model.get_text_features(**inputs)
-                    clip_embeddings.append(clip_embedding[0].cpu().numpy())
-                except Exception as e:
-                    logger.error(f"Error processing product {product.id}: {str(e)}")
-                    clip_embeddings.append(np.zeros(self.clip_dimension))
+            batch_size = SearchConfig.IMAGE_BATCH_SIZE
 
-            # Stack and normalize embeddings
+            async def process_image_batch(image_urls_batch):
+                batch_embeddings = []
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        for urls in image_urls_batch:
+                            product_embeddings = []
+                            for url in urls[:SearchConfig.MAX_IMAGES_PER_PRODUCT]:
+                                try:
+                                    async with session.get(url) as response:
+                                        if response.status == 200:
+                                            image_data = await response.read()
+                                            image = Image.open(io.BytesIO(image_data))
+                                            inputs = self.clip_processor(images=image, return_tensors="pt")
+
+                                            with torch.no_grad():
+                                                image_embedding = self.clip_model.get_image_features(**inputs)
+                                            product_embeddings.append(image_embedding[0].cpu().numpy())
+                                except Exception as e:
+                                    logger.error(f"Error processing image URL {url}: {str(e)}")
+                                    continue
+
+                            if product_embeddings:
+                                # Average the embeddings of all images for this product
+                                avg_embedding = np.mean(product_embeddings, axis=0)
+                                batch_embeddings.append(avg_embedding)
+                            else:
+                                # If no images were successfully processed, use zero embedding
+                                batch_embeddings.append(np.zeros(self.clip_dimension))
+                except Exception as e:
+                    logger.error(f"Error processing image batch: {str(e)}")
+                    return [np.zeros(self.clip_dimension)] * len(image_urls_batch)
+
+                return batch_embeddings
+
+            # Process images in batches
+            image_url_batches = [
+                [p.image_url for p in self.products[i:i + batch_size]]
+                for i in range(0, len(self.products), batch_size)
+            ]
+
+            for batch in image_url_batches:
+                batch_embeddings = await process_image_batch(batch)
+                clip_embeddings.extend(batch_embeddings)
+
             clip_embeddings = np.vstack(clip_embeddings)
+
+            # Normalize embeddings
+            logger.info("Normalizing and combining embeddings...")
             faiss.normalize_L2(text_embeddings)
             faiss.normalize_L2(clip_embeddings)
 
-            # Combine embeddings
+            # Create combined embeddings
             self.combined_embeddings = np.hstack([text_embeddings, clip_embeddings])
 
             # Create FAISS index
+            logger.info("Creating FAISS index...")
             self.combined_index = faiss.IndexFlatIP(self.combined_dimension)
             self.combined_index.add(self.combined_embeddings.astype('float32'))
 
@@ -102,78 +192,202 @@ class EnhancedSearchService:
             logger.error(f"Error creating indexes: {str(e)}")
             raise RuntimeError(f"Failed to create search indexes: {str(e)}")
 
+    def _init_attribute_indexes(self):
+        """Initialize separate indexes for specific attributes"""
+        self.attribute_embeddings = {}
+        self.attribute_indexes = {}
+
+        # Create separate indexes for important attributes
+        attributes_to_index = ['Size', 'Color', 'Fabric', 'Season']
+
+        for attr in attributes_to_index:
+            # Collect all unique values for this attribute
+            values = set()
+            for product in self.products:
+                for attribute in product.attributes:
+                    if attr in attribute:
+                        values.add(attribute[attr])
+
+            # Create embeddings for attribute values
+            if values:
+                embeddings = self.text_model.encode(list(values))
+                self.attribute_embeddings[attr] = embeddings
+
+                # Create FAISS index for this attribute
+                index = faiss.IndexFlatIP(self.text_dimension)
+                faiss.normalize_L2(embeddings)
+                index.add(embeddings.astype('float32'))
+                self.attribute_indexes[attr] = index
+
+    @lru_cache(maxsize=1000)
+    def _get_cached_embeddings(self, key: str, compute_func) -> np.ndarray:
+        """Get embeddings from cache or compute them"""
+        if key not in self.cache:
+            self.cache[key] = compute_func()
+        return self.cache[key]
+
+    def _process_product_images(self, image_urls: List[str]) -> np.ndarray:
+        """Process product images and return combined embedding"""
+        image_embeddings = []
+
+        for url in image_urls[:3]:  # Process up to 3 images per product
+            try:
+                response = requests.get(url)
+                image = Image.open(io.BytesIO(response.content))
+                inputs = self.clip_processor(images=image, return_tensors="pt")
+
+                with torch.no_grad():
+                    image_embedding = self.clip_model.get_image_features(**inputs)
+                image_embeddings.append(image_embedding[0].cpu().numpy())
+            except Exception as e:
+                logger.error(f"Error processing image URL {url}: {str(e)}")
+                continue
+
+        if not image_embeddings:
+            return np.zeros(self.clip_dimension)
+
+        # Combine multiple image embeddings
+        combined = np.mean(image_embeddings, axis=0)
+        return combined
+
+    def _diversify_results(self, results: List[Tuple[int, float]],
+                          diversity_threshold: float = 0.3) -> List[Tuple[int, float]]:
+        """Ensure results aren't too similar to each other"""
+        diversified = []
+        for idx, score in results:
+            if not diversified:
+                diversified.append((idx, score))
+                continue
+
+            # Check similarity with existing results
+            product_embedding = self.combined_embeddings[idx]
+            is_diverse = True
+
+            for div_idx, _ in diversified:
+                div_embedding = self.combined_embeddings[div_idx]
+                similarity = np.dot(product_embedding, div_embedding)
+
+                if similarity > diversity_threshold:
+                    is_diverse = False
+                    break
+
+            if is_diverse:
+                diversified.append((idx, score))
+
+        return diversified
+
     def _apply_preferences(
         self,
         base_scores: np.ndarray,
         indices: np.ndarray,
         preferences: UserPreferences
     ) -> List[tuple[int, float]]:
-        """Apply user preferences to modify search results ranking"""
+        """Apply enhanced user preferences with multiple factors"""
         if not preferences:
             return [(idx, score) for score, idx in zip(base_scores[0], indices[0])]
 
         results = []
+        current_season = SeasonalWeights.get_current_season()
+
         for score, idx in zip(base_scores[0], indices[0]):
             if idx >= len(self.products):
                 continue
 
             product = self.products[idx]
-            preference_score = float(score)  # Start with base similarity score
+            final_score = float(score)  # Base similarity score
 
-            # Apply brand preferences
+            # Apply weighted preferences
+            weights = SearchWeights.BASE_WEIGHTS
+
+            # Brand preference
             if preferences.brand_weights and product.brand in preferences.brand_weights:
-                preference_score *= (1 + preferences.brand_weights[product.brand])
+                brand_boost = preferences.brand_weights[product.brand] * weights['brand']
+                final_score *= (1 + brand_boost)
 
-            # Apply price range preferences
+            # Price range preference
             if preferences.price_range:
                 min_price, max_price = preferences.price_range
                 if min_price <= product.price <= max_price:
-                    preference_score *= 1.2
+                    final_score *= (1 + weights['price'])
 
-            # Apply color preferences
+            # Color preference with semantic matching
             if preferences.preferred_colors:
                 product_colors = [
                     attr['Color'] for attr in product.attributes
                     if 'Color' in attr
                 ]
-                if any(color in preferences.preferred_colors for color in product_colors):
-                    preference_score *= 1.1
 
-            # Apply category preferences
+                for preferred_color in preferences.preferred_colors:
+                    similar_colors = SearchWeights.COLOR_SIMILARITY.get(preferred_color.lower(), [])
+                    if any(color.lower() in [preferred_color.lower()] + similar_colors
+                          for color in product_colors):
+                        final_score *= (1 + weights['color'])
+
+            # Category preference
             if preferences.category_weights and product.category in preferences.category_weights:
-                preference_score *= (1 + preferences.category_weights[product.category])
+                category_boost = preferences.category_weights[product.category] * weights['category']
+                final_score *= (1 + category_boost)
 
-            results.append((idx, preference_score))
+            # Seasonal boost
+            product_season = next((attr['Season'] for attr in product.attributes
+                                 if 'Season' in attr), None)
+            if product_season and product_season.upper() == current_season:
+                final_score *= SeasonalWeights.SEASONS[current_season]['boost']
 
-        # Sort by final preference score
+            results.append((idx, final_score))
+
+        # Sort by final score and apply diversity
         results.sort(key=lambda x: x[1], reverse=True)
-        return results
+        return self._diversify_results(results)
+
+    def _expand_query(self, query: str) -> str:
+        """Expand query with related terms"""
+        # Add color variations
+        expanded_terms = [query]
+
+        # Add color synonyms
+        for color, variations in SearchWeights.COLOR_SIMILARITY.items():
+            if color in query.lower():
+                expanded_terms.extend(variations)
+
+        # Add size variations (S -> Small, etc.)
+        size_mappings = {
+            'S': 'Small',
+            'M': 'Medium',
+            'L': 'Large',
+            'XL': 'Extra Large'
+        }
+
+        for abbrev, full in size_mappings.items():
+            if abbrev in query.upper():
+                expanded_terms.append(full)
+
+        return ' '.join(expanded_terms)
 
     def search(
         self,
         query_type: SearchType,
-        query:  Union[str, bytes],
+        query: Union[str, bytes],
         num_results: int = 5,
         min_similarity: float = 0.0,
         user_preferences: Optional[UserPreferences] = None
     ) -> List[SearchResult]:
-        """
-        Perform multimodal search with user preferences
-        Returns list of SearchResult objects with products and similarity scores
-        """
+        """Enhanced multimodal search with query expansion and result diversification"""
         try:
             # Get raw search results based on query type
             if query_type == SearchType.TEXT:
-                results = self._text_search(query, num_results * 2)
+                expanded_query = self._expand_query(query)
+                results = self._text_search(expanded_query, num_results * 2)
             elif query_type == SearchType.IMAGE:
                 results = self._image_search(query, num_results * 2)
             elif query_type == SearchType.AUDIO:
                 transcription = self._transcribe_audio(query)
-                results = self._text_search(transcription, num_results * 2)
+                expanded_query = self._expand_query(transcription)
+                results = self._text_search(expanded_query, num_results * 2)
             else:
                 raise ValueError(f"Unsupported search type: {query_type}")
 
-            # Filter by minimum similarity and create SearchResult objects
+            # Apply preferences and create SearchResult objects
             search_results = []
             for idx, similarity in results[:num_results]:
                 if similarity >= min_similarity and idx < len(self.products):
@@ -190,6 +404,7 @@ class EnhancedSearchService:
             logger.error(f"Error in search: {str(e)}")
             raise
 
+    # [Previous methods _text_search, _image_search, _transcribe_audio remain unchanged]
     def _text_search(self, query: str, num_results: int) -> List[tuple[int, float]]:
         """Perform text search using combined embeddings"""
         try:

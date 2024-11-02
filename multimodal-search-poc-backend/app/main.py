@@ -12,8 +12,8 @@ from app.models.schemas import (
     Product, SearchQuery, SearchResponse, SearchType,
     UserPreferences, SearchResult
 )
+from app.config.search_config import SearchConfig
 from app.services.search_service import EnhancedSearchService
-
 app = FastAPI(title="Multimodal Search API")
 
 # Add CORS middleware
@@ -35,8 +35,10 @@ async def startup_event():
         with open("app/data/catalog.json", "r") as f:
             catalog = json.load(f)
         search_service = EnhancedSearchService(catalog)
+        # Initialize indexes
+        await search_service._init_multimodal_indexes()
     except Exception as e:
-        print(f"Error during startup: {e}")
+        logger.error(f"Error during startup: {e}")
         raise
 
 @app.get("/products", response_model=List[Product])

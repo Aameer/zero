@@ -37,7 +37,7 @@ uvicorn app.main:app --host localhost --port 9000
 ## Curls:
 ``` bash
 # 1. TEXT SEARCH
-# Regular text search
+# Regular text search with enhanced preferences
 curl -X 'POST' \
   'http://localhost:9000/search' \
   -H 'Content-Type: application/json' \
@@ -49,11 +49,18 @@ curl -X 'POST' \
     "brand_weights": {"Zellbury": 0.8, "Junaid Jamshed": 0.6},
     "price_range": [1000, 5000],
     "preferred_colors": ["Pink", "Red"],
-    "category_weights": {"Stitched": 0.7}
+    "category_weights": {"Stitched": 0.7},
+    "seasonal_preference": "SUMMER",
+    "size_preference": ["M", "L"],
+    "fabric_preference": ["Cotton", "Lawn"]
+  },
+  "filter_attributes": {
+    "Size": ["M", "L"],
+    "Fabric": ["Cotton", "Lawn"]
   }
 }'
 
-# Detailed text search (includes similarity scores)
+# Detailed text search with enhanced features
 curl -X 'POST' \
   'http://localhost:9000/search/detailed' \
   -H 'Content-Type: application/json' \
@@ -65,41 +72,84 @@ curl -X 'POST' \
     "brand_weights": {"Zellbury": 0.8, "Junaid Jamshed": 0.6},
     "price_range": [1000, 5000],
     "preferred_colors": ["Pink", "Red"],
-    "category_weights": {"Stitched": 0.7}
+    "category_weights": {"Stitched": 0.7},
+    "seasonal_preference": "SUMMER",
+    "size_preference": ["M", "L"],
+    "fabric_preference": ["Cotton", "Lawn"]
+  },
+  "filter_attributes": {
+    "Size": ["M", "L"],
+    "Fabric": ["Cotton", "Lawn"]
   }
 }'
 
 # 2. IMAGE SEARCH
-# Regular image search
+# Regular image search with enhanced preferences
 curl -X 'POST' \
   'http://localhost:9000/search/image' \
   -H 'Content-Type: multipart/form-data' \
   -F 'file=@/Users/aameer/Desktop/WPC2412841-1.jpg' \
   -F 'num_results=5' \
-  -F 'preferences={"brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},"price_range":[1000,5000],"preferred_colors":["Pink","Red"],"category_weights":{"Stitched":0.7}}'
+  -F 'preferences={
+    "brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},
+    "price_range":[1000,5000],
+    "preferred_colors":["Pink","Red"],
+    "category_weights":{"Stitched":0.7},
+    "seasonal_preference":"SUMMER",
+    "size_preference":["M","L"],
+    "fabric_preference":["Cotton","Lawn"]
+  }' \
+  -F 'filter_attributes={"Size":["M","L"],"Fabric":["Cotton","Lawn"]}'
 
-# Detailed image search
+# Detailed image search with enhanced features
 curl -X 'POST' \
   'http://localhost:9000/search/image/detailed' \
   -H 'Content-Type: multipart/form-data' \
   -F 'file=@/Users/aameer/Desktop/WPC2412841-1.jpg' \
   -F 'num_results=5' \
-  -F 'preferences={"brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},"price_range":[1000,5000],"preferred_colors":["Pink","Red"],"category_weights":{"Stitched":0.7}}'
+  -F 'preferences={
+    "brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},
+    "price_range":[1000,5000],
+    "preferred_colors":["Pink","Red"],
+    "category_weights":{"Stitched":0.7},
+    "seasonal_preference":"SUMMER",
+    "size_preference":["M","L"],
+    "fabric_preference":["Cotton","Lawn"]
+  }' \
+  -F 'filter_attributes={"Size":["M","L"],"Fabric":["Cotton","Lawn"]}'
 
 # 3. AUDIO SEARCH
-# Regular audio search
+# Regular audio search with enhanced preferences
 curl -X 'POST' \
   'http://localhost:9000/search/audio' \
   -H 'Content-Type: multipart/form-data' \
   -F 'file=@/Users/aameer/Downloads/green_dress_audio_test.mp3;type=audio/mpeg' \
   -F 'num_results=5' \
-  -F 'preferences={"brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},"price_range":[1000,5000],"preferred_colors":["Pink","Red"],"category_weights":{"Stitched":0.7}}'
+  -F 'preferences={
+    "brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},
+    "price_range":[1000,5000],
+    "preferred_colors":["Pink","Red"],
+    "category_weights":{"Stitched":0.7},
+    "seasonal_preference":"SUMMER",
+    "size_preference":["M","L"],
+    "fabric_preference":["Cotton","Lawn"]
+  }' \
+  -F 'filter_attributes={"Size":["M","L"],"Fabric":["Cotton","Lawn"]}'
 
-# Detailed audio search
+# Detailed audio search with enhanced features
 curl -X 'POST' \
   'http://localhost:9000/search/audio/detailed' \
   -H 'Content-Type: multipart/form-data' \
   -F 'file=@/Users/aameer/Downloads/green_dress_audio_test.mp3;type=audio/mpeg' \
   -F 'num_results=5' \
-  -F 'preferences={"brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},"price_range":[1000,5000],"preferred_colors":["Pink","Red"],"category_weights":{"Stitched":0.7}}'
+  -F 'preferences={
+    "brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},
+    "price_range":[1000,5000],
+    "preferred_colors":["Pink","Red"],
+    "category_weights":{"Stitched":0.7},
+    "seasonal_preference":"SUMMER",
+    "size_preference":["M","L"],
+    "fabric_preference":["Cotton","Lawn"]
+  }' \
+  -F 'filter_attributes={"Size":["M","L"],"Fabric":["Cotton","Lawn"]}'
 ```
