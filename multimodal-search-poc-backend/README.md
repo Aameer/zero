@@ -32,3 +32,74 @@ cd /Users/aameer/Documents/Aameer/eco/zero/multimodal-search-poc-backend
 source ~/Documents/Aameer/eco/venv/bin/activate
 uvicorn app.main:app --host localhost --port 9000
 ```
+
+
+## Curls:
+``` bash
+# 1. TEXT SEARCH
+# Regular text search
+curl -X 'POST' \
+  'http://localhost:9000/search' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "query_type": "text",
+  "query": "pink girl dress",
+  "num_results": 5,
+  "preferences": {
+    "brand_weights": {"Zellbury": 0.8, "Junaid Jamshed": 0.6},
+    "price_range": [1000, 5000],
+    "preferred_colors": ["Pink", "Red"],
+    "category_weights": {"Stitched": 0.7}
+  }
+}'
+
+# Detailed text search (includes similarity scores)
+curl -X 'POST' \
+  'http://localhost:9000/search/detailed' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "query_type": "text",
+  "query": "pink girl dress",
+  "num_results": 5,
+  "preferences": {
+    "brand_weights": {"Zellbury": 0.8, "Junaid Jamshed": 0.6},
+    "price_range": [1000, 5000],
+    "preferred_colors": ["Pink", "Red"],
+    "category_weights": {"Stitched": 0.7}
+  }
+}'
+
+# 2. IMAGE SEARCH
+# Regular image search
+curl -X 'POST' \
+  'http://localhost:9000/search/image' \
+  -H 'Content-Type: multipart/form-data' \
+  -F 'file=@/Users/aameer/Desktop/WPC2412841-1.jpg' \
+  -F 'num_results=5' \
+  -F 'preferences={"brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},"price_range":[1000,5000],"preferred_colors":["Pink","Red"],"category_weights":{"Stitched":0.7}}'
+
+# Detailed image search
+curl -X 'POST' \
+  'http://localhost:9000/search/image/detailed' \
+  -H 'Content-Type: multipart/form-data' \
+  -F 'file=@/Users/aameer/Desktop/WPC2412841-1.jpg' \
+  -F 'num_results=5' \
+  -F 'preferences={"brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},"price_range":[1000,5000],"preferred_colors":["Pink","Red"],"category_weights":{"Stitched":0.7}}'
+
+# 3. AUDIO SEARCH
+# Regular audio search
+curl -X 'POST' \
+  'http://localhost:9000/search/audio' \
+  -H 'Content-Type: multipart/form-data' \
+  -F 'file=@/Users/aameer/Downloads/green_dress_audio_test.mp3;type=audio/mpeg' \
+  -F 'num_results=5' \
+  -F 'preferences={"brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},"price_range":[1000,5000],"preferred_colors":["Pink","Red"],"category_weights":{"Stitched":0.7}}'
+
+# Detailed audio search
+curl -X 'POST' \
+  'http://localhost:9000/search/audio/detailed' \
+  -H 'Content-Type: multipart/form-data' \
+  -F 'file=@/Users/aameer/Downloads/green_dress_audio_test.mp3;type=audio/mpeg' \
+  -F 'num_results=5' \
+  -F 'preferences={"brand_weights":{"Zellbury":0.8,"Junaid Jamshed":0.6},"price_range":[1000,5000],"preferred_colors":["Pink","Red"],"category_weights":{"Stitched":0.7}}'
+```

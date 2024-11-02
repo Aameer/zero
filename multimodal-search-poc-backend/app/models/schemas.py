@@ -8,11 +8,15 @@ class SearchType(str, Enum):
     IMAGE = "image"
     AUDIO = "audio"
 
-class Attribute(BaseModel):
-    Size: str
+class UserPreferences(BaseModel):
+    brand_weights: Optional[Dict[str, float]] = None
+    price_range: Optional[tuple[float, float]] = None
+    preferred_colors: Optional[List[str]] = None
+    delivery_speed: Optional[int] = None
+    category_weights: Optional[Dict[str, float]] = None
 
 class Product(BaseModel):
-    id: str #UUID
+    id: UUID
     title: str
     brand: str
     price: float
@@ -37,9 +41,10 @@ class Product(BaseModel):
 
 class SearchQuery(BaseModel):
     query_type: SearchType
-    query: str  # For text: string, for image/audio: base64 encoded string
+    query: str
     num_results: Optional[int] = 5
     min_similarity: Optional[float] = 0.0
+    preferences: Optional[UserPreferences] = None
 
 class SearchResult(BaseModel):
     product: Product
