@@ -13,6 +13,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Toaster, toast } from 'sonner';
 import { searchApi } from '@/services/searchApi';
 import ProductDetailDialog from './ProductDetailDialog';
+import FilterPanel from './FilterPanel';
+import { SearchPreferences, FilterAttributes } from '@/lib/types';
 
 
 interface SearchResult {
@@ -34,12 +36,21 @@ interface ProductAttribute {
 // Update the ProductCard component's image handling
 const ProductCard = ({ item, onClick }: { item: SearchResult; onClick: () => void }) => {
   // Get the first image URL, with fallback to a placeholder
-  const primaryImageUrl = item.image_url && item.image_url.length > 0
+  const primaryImageUrl = Array.isArray(item.image_url) && item.image_url.length > 0
     ? item.image_url[0]
     : '/api/placeholder/400/400';
 
   // Get remaining images count
   const remainingImages = Array.isArray(item.image_url) ? Math.max(0, item.image_url.length - 1) : 0;
+
+  // Extract key attributes
+  const getAttributeValue = (key: string) => {
+    const attribute = item.attributes.find(attr => Object.keys(attr)[0] === key);
+    return attribute ? Object.values(attribute)[0] : null;
+  };
+
+  const color = getAttributeValue('Color');
+  const fabric = getAttributeValue('Fabric');
 
   return (
     <Card 
@@ -69,15 +80,22 @@ const ProductCard = ({ item, onClick }: { item: SearchResult; onClick: () => voi
           <span className="font-bold text-lg">Rs. {item.price.toLocaleString()}</span>
         </div>
         <div className="flex gap-2 flex-wrap">
-          {item.attributes?.slice(0, 2).map((attr, index) => {
-            const [key, value] = Object.entries(attr)[0];
-            return (
-              <Badge key={index} variant="outline">
-                {value}
-              </Badge>
-            );
-          })}
+          {color && (
+            <Badge variant="outline">
+              {color}
+            </Badge>
+          )}
+          {fabric && (
+            <Badge variant="outline">
+              {fabric}
+            </Badge>
+          )}
         </div>
+        {item.similarity !== undefined && (
+          <div className="mt-2 text-sm text-gray-600">
+            Match: {(item.similarity * 100).toFixed(1)}%
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -212,6 +230,7 @@ const writeString = (view: DataView, offset: number, string: string): void => {
   }
 };
 const SearchInterface = () => {
+  const [isMobile, setIsMobile] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [searchType, setSearchType] = useState('text');
   const [query, setQuery] = useState('');
@@ -229,6 +248,8 @@ const SearchInterface = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const [preferences, setPreferences] = useState<SearchPreferences>({});
+  const [filterAttributes, setFilterAttributes] = useState<FilterAttributes>({});
 
   const brands = ['Sana Safinaz', 'Junaid Jamshed'];
   const sortOptions = [
@@ -239,30 +260,31 @@ const SearchInterface = () => {
   ];
 
   useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    const handleScroll = () => setShowScrollTop(window.pageYOffset > 300);
+  
     const fetchProducts = async () => {
       try {
         setInitialLoading(true);
-
-        // Fetch the list of available brands and initialize the selectedBrand state
-        // TODO: this should ideally come from users preferences.
-        setSelectedBrand(brands[0]);
-
         const response = await searchApi.getAllProducts();
-        console.log('Initial products response:', response);
-        if (response && Array.isArray(response)) {  // Changed from response.data
-          const products: SearchResult[] = response.map((product: any) => ({
+        
+        // The response is already the array of products
+        const products = response.data;
+        
+        if (Array.isArray(products)) {
+          const mappedProducts: SearchResult[] = products.map((product) => ({
             id: product.id || String(Math.random()),
-            title: product.title || '',
-            brand: product.brand || '',
+            title: product.title || 'Untitled Product',
+            brand: product.brand || 'Unknown Brand',
             price: product.price || 0,
             attributes: Array.isArray(product.attributes) ? product.attributes : [],
-            category: product.category || '',
+            category: product.category || 'Uncategorized',
             description: product.description || '',
             image_url: Array.isArray(product.image_url) ? product.image_url : []
           }));
           
-          setDisplayedItems(products);
-          toast.success(`Loaded ${products.length} products`);
+          setDisplayedItems(mappedProducts);
+          toast.success(`Loaded ${mappedProducts.length} products`);
         } else {
           throw new Error('Invalid response format');
         }
@@ -275,35 +297,20 @@ const SearchInterface = () => {
       }
     };
   
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    window.addEventListener('scroll', handleScroll);
     fetchProducts();
+  
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+      window.removeEventListener('scroll', handleScroll);
+    };
   }, []);
 
   // Update your handleSearch function:
   const handleSearch = async () => {
     if (!query.trim()) {
-      try {
-        setIsLoading(true);
-        const response = await searchApi.getAllProducts();
-        console.log('Search response:', response);
-        if (response && Array.isArray(response)) {
-          const products: SearchResult[] = response.map((product: any) => ({
-            id: product.id || String(Math.random()),
-            title: product.title || '',
-            brand: product.brand || '',
-            price: product.price || 0,
-            attributes: Array.isArray(product.attributes) ? product.attributes : [],
-            category: product.category || '',
-            description: product.description || '',
-            image_url: Array.isArray(product.image_url) ? product.image_url : []
-          }));
-          setDisplayedItems(products);
-        }
-      } catch (error) {
-        console.error('Error fetching all products:', error);
-        toast.error('Failed to load products');
-      } finally {
-        setIsLoading(false);
-      }
       return;
     }
 
@@ -311,25 +318,26 @@ const SearchInterface = () => {
     setIsSearching(true);
     
     try {
-      const response = await searchApi.textSearch(query);
-      console.log('Search response: below one', response);
+      const response = await searchApi.textSearch(
+        query,
+        preferences,
+        filterAttributes
+      );
       
       if (Array.isArray(response)) {
-        const mappedResults: SearchResult[] = response.map((product: any) => ({
+        const mappedResults = response.map((product) => ({
           id: product.id || String(Math.random()),
-          title: product.title || '',
-          brand: product.brand || '',
+          title: product.title || 'Untitled Product',
+          brand: product.brand || 'Unknown Brand',
           price: product.price || 0,
           attributes: Array.isArray(product.attributes) ? product.attributes : [],
-          category: product.category || '',
+          category: product.category || 'Uncategorized',
           description: product.description || '',
           image_url: Array.isArray(product.image_url) ? product.image_url : []
         }));
-        console.log(mappedResults)
+        
         setDisplayedItems(mappedResults);
         toast.success(`Found ${mappedResults.length} results`);
-      } else {
-        throw new Error('Invalid response format');
       }
     } catch (error) {
       console.error('Search error:', error);
@@ -351,56 +359,58 @@ const SearchInterface = () => {
     return Math.min(matchScore, 1);
   };
 
-  const handleImageUpload = async (file: File) => {
-    if (!file) {
-      toast.error('Please select an image');
-      return;
-    }
-  
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please upload an image file');
-      return;
-    }
-  
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        setImagePreview(reader.result as string);
-        setIsSearching(true);
-        setIsLoading(true);
-        
-        const response = await searchApi.imageSearch(file);
-        console.log('Image search response:', response);
-        if (response) {
-          const mappedResults: SearchResult[] = response.map((product: any) => ({
-            id: product.id || String(Math.random()),
-            title: product.title || '',
-            brand: product.brand || '',
-            price: product.price || 0,
-            attributes: Array.isArray(product.attributes) ? product.attributes : [],
-            category: product.category || '',
-            description: product.description || '',
-            image_url: Array.isArray(product.image_url) ? product.image_url : []
-          }));
-          console.log("image mappedResults", mappedResults)
-          setDisplayedItems(mappedResults);
-          toast.success(`Found ${mappedResults.length} results`);
-        }
-      } catch (error) {
-        console.error('Image search error:', error);
-        toast.error('Image search failed, showing sample results');
-      } finally {
-        setIsLoading(false);
+    // Update the handleImageUpload function
+    const handleImageUpload = async (file: File) => {
+      if (!file) {
+        toast.error('Please select an image');
+        return;
       }
-    };
-    reader.onerror = () => {
-      toast.error('Error reading image file');
-      setIsLoading(false);
+      
+      if (!file.type.startsWith('image/')) {
+        toast.error('Please upload an image file');
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        try {
+          setImagePreview(reader.result as string);
+          setIsSearching(true);
+          setIsLoading(true);
+          
+          const response = await searchApi.imageSearch(
+            file,
+            preferences,
+            filterAttributes
+          );
+          
+          if (response && response.results) {
+            const mappedResults = response.results.map((result) => ({
+              id: result.product.id,
+              title: result.product.title,
+              brand: result.product.brand,
+              price: result.product.price,
+              similarity: result.similarity_score,
+              attributes: result.product.attributes || [],
+              category: result.product.category,
+              image_url: result.product.image_url,
+              description: result.product.description
+            }));
+            
+            setDisplayedItems(mappedResults);
+            toast.success(`Found ${response.results.length} similar products`);
+          }
+        } catch (error) {
+          console.error('Image search error:', error);
+          toast.error('Image search failed');
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      
+      reader.readAsDataURL(file);
     };
   
-    reader.readAsDataURL(file);
-  };
 
   const handleVoiceRecording = async () => {
     if (!isRecording) {
@@ -536,6 +546,27 @@ const SearchInterface = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {showFilters && (
+        <div className="mb-8">
+          <Card>
+            <CardHeader>
+              <CardTitle>Filters</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                {/* Existing filters */}
+                <div className="border-t pt-6">
+                  <h3 className="text-lg font-semibold mb-4">Product Attributes</h3>
+                  <FilterPanel 
+                    onFilterChange={setFilterAttributes}
+                    initialFilters={filterAttributes}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
       <Toaster position="top-center" richColors />
       <div className="p-4 md:p-8 max-w-6xl mx-auto">
         <h1 className="text-3xl font-bold mb-4">Product Search</h1>
