@@ -1,6 +1,6 @@
 # app/models/schemas.py
 from pydantic import BaseModel, HttpUrl, Field, validator
-from typing import List, Optional, Dict, Union, Tuple
+from typing import List, Optional, Dict, Union, Tuple, Any
 from enum import Enum
 from uuid import UUID
 from datetime import datetime

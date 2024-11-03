@@ -1,28 +1,45 @@
 # app/services/search_service.py
-from sentence_transformers import SentenceTransformer
-import torch
-from transformers import CLIPProcessor, CLIPModel
-from transformers import WhisperProcessor, WhisperForConditionalGeneration
-import faiss
-import numpy as np
-from typing import List, Dict, Optional, Union, Tuple
+# Standard library imports
+import ssl
 import io
-from PIL import Image
-from scipy.io import wavfile
+import json
 import logging
+import asyncio
 from dataclasses import dataclass
-import soundfile as sf
-import librosa
-import requests
 from datetime import datetime
 from functools import lru_cache
-import json
 from collections import defaultdict
-import Levenshtein  # for fuzzy matching
+from typing import List, Dict, Optional, Union, Tuple
 
+# Third-party imports
+import numpy as np
+import torch
+import faiss
+import aiohttp
+import requests
+import librosa
+import soundfile as sf
+import Levenshtein
+from PIL import Image
+from scipy.io import wavfile
+from sentence_transformers import SentenceTransformer
+from transformers import (
+    CLIPProcessor,
+    CLIPModel,
+    WhisperProcessor,
+    WhisperForConditionalGeneration
+)
+
+# Local imports
 from app.models.schemas import SearchType, SearchResult, Product, UserPreferences
+from app.config.search_config import SearchConfig  # Make sure this import works
 
+# Set up logger
 logger = logging.getLogger(__name__)
+
+# You can also create constants for these values to avoid SearchConfig references
+IMAGE_BATCH_SIZE = 16
+MAX_IMAGES_PER_PRODUCT = 3
 
 class SeasonalWeights:
     """Seasonal weightings for product relevance"""
@@ -67,32 +84,39 @@ class EnhancedSearchService:
         self.products = [Product(**p) for p in catalog]
         self.cache = {}  # Simple cache for embeddings
 
+        # Set constants from SearchConfig
+        self.IMAGE_BATCH_SIZE = getattr(SearchConfig, 'IMAGE_BATCH_SIZE', 16)
+        self.MAX_IMAGES_PER_PRODUCT = getattr(SearchConfig, 'MAX_IMAGES_PER_PRODUCT', 3)
+
         # Initialize models with error handling
         self._initialize_models()
 
-        # Initialize indexes and cache
-        self._init_multimodal_indexes()
+    async def initialize(self):
+        """Async initialization method"""
+        logger.info("Starting async initialization...")
+        await self._init_multimodal_indexes()
         self._init_attribute_indexes()
         logger.info("Search service initialization complete!")
 
     def _initialize_models(self):
         """Initialize all required models with error handling"""
         try:
-            logger.info("Initializing text model...")
+            logger.info("Starting model initialization...")
+
+            logger.info("Downloading and initializing text model...")
             self.text_model = SentenceTransformer('all-MiniLM-L6-v2')
             self.text_dimension = 384
 
-            logger.info("Initializing CLIP model...")
+            logger.info("Downloading and initializing CLIP model...")
             self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
             self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
             self.clip_dimension = 512
 
-            logger.info("Initializing audio model...")
+            logger.info("Downloading and initializing Whisper model...")
             self.audio_processor = WhisperProcessor.from_pretrained("openai/whisper-base")
             self.audio_model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base")
-
-            # Combined dimension for the unified embedding space
             self.combined_dimension = self.text_dimension + self.clip_dimension
+            logger.info("All models initialized successfully")
 
         except Exception as e:
             logger.error(f"Error initializing models: {str(e)}")
@@ -102,11 +126,11 @@ class EnhancedSearchService:
         """Initialize combined text and image embeddings index with actual images"""
         try:
             logger.info("Creating multimodal embeddings...")
+            logger.info(f"Processing {len(self.products)} products...")
 
             # Create text embeddings with attribute awareness
             product_texts = []
             for p in self.products:
-                # Combine all product information including attributes
                 attribute_text = ' '.join([
                     f"{key} {value}"
                     for attr in p.attributes
@@ -115,81 +139,127 @@ class EnhancedSearchService:
                 text = f"{p.title} {p.brand} {p.description} {attribute_text}"
                 product_texts.append(text)
 
-            # Get text embeddings
-            logger.info("Computing text embeddings...")
+            logger.info(f"Computing text embeddings for {len(product_texts)} products...")
             text_embeddings = self._get_cached_embeddings(
                 'text_embeddings',
                 lambda: self.text_model.encode(product_texts)
             )
+            text_embeddings = text_embeddings.astype(np.float32)
+            logger.info("Text embeddings computed successfully")
 
-            # Process product images in batches
-            logger.info("Processing product images...")
-            clip_embeddings = []
-            batch_size = SearchConfig.IMAGE_BATCH_SIZE
-
-            async def process_image_batch(image_urls_batch):
+            async def process_image_batch(image_urls_batch, batch_num):
                 batch_embeddings = []
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        for urls in image_urls_batch:
-                            product_embeddings = []
-                            for url in urls[:SearchConfig.MAX_IMAGES_PER_PRODUCT]:
+                logger.info(f"Processing batch {batch_num}/{total_batches}")
+
+                timeout = aiohttp.ClientTimeout(total=30)
+                connector = aiohttp.TCPConnector(ssl=False)
+
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                    for i, urls in enumerate(image_urls_batch):
+                        product_embeddings = []
+                        for url_obj in urls[:self.MAX_IMAGES_PER_PRODUCT]:
+                            for attempt in range(3):  # Retry up to 3 times
                                 try:
-                                    async with session.get(url) as response:
+                                    # Convert URL to string carefully
+                                    url_str = str(url_obj)
+                                    if '?' in url_str:  # Handle query parameters
+                                        base_url = url_str.split('?')[0]
+                                        url_str = f"{base_url}?quality=80"  # Simplified params
+
+                                    async with session.get(url_str) as response:
                                         if response.status == 200:
                                             image_data = await response.read()
-                                            image = Image.open(io.BytesIO(image_data))
+                                            image = Image.open(io.BytesIO(image_data)).convert('RGB')
                                             inputs = self.clip_processor(images=image, return_tensors="pt")
 
                                             with torch.no_grad():
                                                 image_embedding = self.clip_model.get_image_features(**inputs)
                                             product_embeddings.append(image_embedding[0].cpu().numpy())
+                                            break  # Success, exit retry loop
+                                        else:
+                                            logger.warning(f"Failed to fetch image, status: {response.status}")
+
                                 except Exception as e:
-                                    logger.error(f"Error processing image URL {url}: {str(e)}")
-                                    continue
+                                    logger.error(f"Error processing image URL {url_str}: {str(e)}")
+                                    if attempt == 2:  # Last attempt
+                                        continue
+                                    await asyncio.sleep(1)  # Wait before retry
 
-                            if product_embeddings:
-                                # Average the embeddings of all images for this product
-                                avg_embedding = np.mean(product_embeddings, axis=0)
-                                batch_embeddings.append(avg_embedding)
-                            else:
-                                # If no images were successfully processed, use zero embedding
-                                batch_embeddings.append(np.zeros(self.clip_dimension))
-                except Exception as e:
-                    logger.error(f"Error processing image batch: {str(e)}")
-                    return [np.zeros(self.clip_dimension)] * len(image_urls_batch)
+                        if product_embeddings:
+                            avg_embedding = np.mean(product_embeddings, axis=0)
+                            batch_embeddings.append(avg_embedding.astype(np.float32))
+                        else:
+                            batch_embeddings.append(np.zeros(self.clip_dimension, dtype=np.float32))
 
-                return batch_embeddings
+                return np.array(batch_embeddings, dtype=np.float32)
 
             # Process images in batches
+            logger.info("Starting image processing...")
+            batch_size = self.IMAGE_BATCH_SIZE
+            total_batches = (len(self.products) + batch_size - 1) // batch_size
+            logger.info(f"Processing images in {total_batches} batches of size {batch_size}")
+
             image_url_batches = [
                 [p.image_url for p in self.products[i:i + batch_size]]
                 for i in range(0, len(self.products), batch_size)
             ]
 
-            for batch in image_url_batches:
-                batch_embeddings = await process_image_batch(batch)
-                clip_embeddings.extend(batch_embeddings)
+            all_clip_embeddings = []
+            for batch_num, batch in enumerate(image_url_batches, 1):
+                batch_embeddings = await process_image_batch(batch, batch_num)
+                all_clip_embeddings.append(batch_embeddings)
+                logger.info(f"Completed batch {batch_num}/{total_batches}")
 
-            clip_embeddings = np.vstack(clip_embeddings)
+            logger.info("Combining all image embeddings...")
+            if not all_clip_embeddings:
+                logger.warning("No image embeddings were generated, using zeros")
+                clip_embeddings = np.zeros((len(self.products), self.clip_dimension), dtype=np.float32)
+            else:
+                clip_embeddings = np.vstack(all_clip_embeddings)
 
-            # Normalize embeddings
-            logger.info("Normalizing and combining embeddings...")
-            faiss.normalize_L2(text_embeddings)
-            faiss.normalize_L2(clip_embeddings)
+            # Ensure all embeddings are float32 and contiguous
+            text_embeddings = np.ascontiguousarray(text_embeddings, dtype=np.float32)
+            clip_embeddings = np.ascontiguousarray(clip_embeddings, dtype=np.float32)
 
-            # Create combined embeddings
+            logger.info("Normalizing embeddings...")
+            if len(text_embeddings) > 0:
+                try:
+                    text_embeddings_copy = text_embeddings.copy()
+                    faiss.normalize_L2(text_embeddings_copy)
+                    text_embeddings = text_embeddings_copy
+                except Exception as e:
+                    logger.error(f"Error normalizing text embeddings: {str(e)}")
+                    # Continue with unnormalized embeddings
+
+            if len(clip_embeddings) > 0:
+                try:
+                    clip_embeddings_copy = clip_embeddings.copy()
+                    faiss.normalize_L2(clip_embeddings_copy)
+                    clip_embeddings = clip_embeddings_copy
+                except Exception as e:
+                    logger.error(f"Error normalizing image embeddings: {str(e)}")
+                    # Continue with unnormalized embeddings
+
+            logger.info("Creating combined embeddings...")
             self.combined_embeddings = np.hstack([text_embeddings, clip_embeddings])
+            self.combined_embeddings = np.ascontiguousarray(self.combined_embeddings, dtype=np.float32)
 
-            # Create FAISS index
             logger.info("Creating FAISS index...")
             self.combined_index = faiss.IndexFlatIP(self.combined_dimension)
-            self.combined_index.add(self.combined_embeddings.astype('float32'))
+            if len(self.combined_embeddings) > 0:
+                try:
+                    self.combined_index.add(self.combined_embeddings)
+                    logger.info("FAISS index created successfully")
+                except Exception as e:
+                    logger.error(f"Error adding to FAISS index: {str(e)}")
+                    raise
 
-            logger.info("Multimodal index creation complete")
+            logger.info("Multimodal index creation completed successfully!")
 
         except Exception as e:
             logger.error(f"Error creating indexes: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise RuntimeError(f"Failed to create search indexes: {str(e)}")
 
     def _init_attribute_indexes(self):

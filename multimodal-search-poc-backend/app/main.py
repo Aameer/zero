@@ -1,4 +1,5 @@
 # app/main.py
+# app/main.py
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -7,6 +8,7 @@ from typing import List
 from fastapi import Form
 import json
 import time
+import logging
 
 from app.models.schemas import (
     Product, SearchQuery, SearchResponse, SearchType,
@@ -14,6 +16,11 @@ from app.models.schemas import (
 )
 from app.config.search_config import SearchConfig
 from app.services.search_service import EnhancedSearchService
+
+# Set up logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI(title="Multimodal Search API")
 
 # Add CORS middleware
@@ -32,11 +39,13 @@ search_service = None
 async def startup_event():
     global search_service
     try:
+        logger.info("Starting up the application...")
         with open("app/data/catalog.json", "r") as f:
             catalog = json.load(f)
         search_service = EnhancedSearchService(catalog)
-        # Initialize indexes
-        await search_service._init_multimodal_indexes()
+        logger.info("Search service created, initializing indexes...")
+        await search_service.initialize()
+        logger.info("Startup completed successfully!")
     except Exception as e:
         logger.error(f"Error during startup: {e}")
         raise
