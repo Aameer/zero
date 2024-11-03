@@ -1,0 +1,10 @@
+{
+    "blue_dress.jpg": {
+        "relevant_products": ["0071d041-df7f-47d4-a710-20fba1733e33"],
+        "relevance_scores": [5],
+        "attributes": {
+            "color": "Light Blue",
+            "category": "Stitched"
+        }
+    }
+}

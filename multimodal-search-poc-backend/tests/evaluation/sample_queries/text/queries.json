@@ -1,0 +1,13 @@
+{
+    "queries": [
+        {
+            "query": "black lawn printed dress",
+            "relevant_products": ["0031665f-2984-4b49-856f-50cf85406067"],
+            "relevance_scores": [5],
+            "attributes": {
+                "color": "Black",
+                "fabric": "Lawn"
+            }
+        }
+    ]
+}

@@ -1,0 +1,10 @@
+{
+    "queries": [
+        {
+            "query": "black lawn printed dress",
+            "type": "text",
+            "relevant_products": ["0031665f-2984-4b49-856f-50cf85406067"],
+            "relevance_scores": [5]
+        }
+    ]
+}

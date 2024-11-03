@@ -3,17 +3,23 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
-from fastapi import Form
+from typing import List, Optional
 import json
 import time
+import logging
+from fastapi import Form
 
 from app.models.schemas import (
     Product, SearchQuery, SearchResponse, SearchType,
     UserPreferences, SearchResult
 )
-from app.config.search_config import SearchConfig
 from app.services.search_service import EnhancedSearchService
+from app.services.imagebind_service import ImageBindSearchService
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Multimodal Search API")
 
 # Add CORS middleware
@@ -25,63 +31,116 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize search service
-search_service = None
+# Global service instances
+legacy_search_service: Optional[EnhancedSearchService] = None
+imagebind_search_service: Optional[ImageBindSearchService] = None
+search_service: Optional[EnhancedSearchService] = None
 
-@app.on_event("startup")
-async def startup_event():
+async def initialize_service():
+    """Initialize service safely"""
     global search_service
     try:
         with open("app/data/catalog.json", "r") as f:
             catalog = json.load(f)
-        search_service = EnhancedSearchService(catalog)
-        # Initialize indexes
-        await search_service._init_multimodal_indexes()
+            # Start with just 2 items
+            catalog = catalog[:2]
+
+        search_service = await EnhancedSearchService.create(catalog)
+        logger.info("Search service initialized successfully")
+
     except Exception as e:
-        logger.error(f"Error during startup: {e}")
+        logger.error(f"Service initialization failed: {str(e)}")
+        if search_service:
+            await search_service.cleanup()
+        search_service = None
         raise
 
+@app.on_event("startup")
+async def startup_event():
+    """Startup handler"""
+    await initialize_service()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Shutdown handler"""
+    global search_service
+    if search_service:
+        await search_service.cleanup()
+        search_service = None
+
+"""
+@app.on_event("startup")
+async def startup_event():
+    await initialize_services()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global legacy_search_service, imagebind_search_service
+    try:
+        if legacy_search_service:
+            await legacy_search_service.cleanup()
+        if imagebind_search_service:
+            await imagebind_search_service.cleanup()
+    except Exception as e:
+        logger.error(f"Error during shutdown: {str(e)}")
+    finally:
+        legacy_search_service = None
+        imagebind_search_service = None
+"""
 @app.get("/products", response_model=List[Product])
 async def get_products():
+    """Get all products endpoint"""
     try:
         with open("app/data/catalog.json", "r") as f:
             catalog = json.load(f)
         return catalog
     except Exception as e:
+        logger.error(f"Error fetching products: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-@app.post("/search", response_model=List[Product])
-async def search(query: SearchQuery):
-    if not search_service:
-        raise HTTPException(status_code=500, detail="Search service not initialized")
 
+@app.post("/search", response_model=SearchResponse)
+async def search(query: SearchQuery):
+    """General search endpoint"""
+    if not legacy_search_service:
+        raise HTTPException(status_code=503, detail="Search service not initialized")
+
+    start_time = time.time()
     try:
-        search_results = search_service.search(
+        results = await legacy_search_service.search(
             query_type=query.query_type,
             query=query.query,
             num_results=query.num_results,
             min_similarity=query.min_similarity,
             user_preferences=query.preferences
         )
+        search_time = time.time() - start_time
 
-        # Extract just the products from the search results
-        products = [result.product for result in search_results]
-        return products
-
+        return SearchResponse(
+            results=results,
+            total_results=len(results),
+            search_time=search_time
+        )
     except Exception as e:
+        logger.error(f"Error in search: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.post("/search/image", response_model=List[Product])
+@app.post("/search/image", response_model=SearchResponse)
 async def image_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
     num_results: int = 5,
     min_similarity: float = 0.0
 ):
+    """Image search endpoint"""
+    if not legacy_search_service:
+        raise HTTPException(status_code=503, detail="Search service not initialized")
+
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
 
+    start_time = time.time()
     try:
-        # Parse preferences JSON if provided
+        # Parse preferences if provided
         user_preferences = None
         if preferences:
             try:
@@ -91,21 +150,27 @@ async def image_search(
                 raise HTTPException(status_code=400, detail="Invalid preferences JSON")
 
         contents = await file.read()
-        search_results = search_service.search(
+        results = await legacy_search_service.search(
             query_type=SearchType.IMAGE,
             query=contents,
             num_results=num_results,
             min_similarity=min_similarity,
             user_preferences=user_preferences
         )
+        search_time = time.time() - start_time
 
-        # Extract just the products from the search results
-        products = [result.product for result in search_results]
-        return products
-
+        return SearchResponse(
+            results=results,
+            total_results=len(results),
+            search_time=search_time
+        )
     except Exception as e:
+        logger.error(f"Error in image search: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
+# Add similar endpoints for audio search if needed...
+# Add similar modifications for audio search and other endpoints...
+"""
 # New endpoint to get search results with similarity scores
 @app.post("/search/detailed", response_model=List[SearchResult])
 async def detailed_search(query: SearchQuery):
@@ -281,3 +346,50 @@ async def detailed_audio_search(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/search/compare", response_model=List[SearchResponse])
+async def compare_search(query: SearchQuery):
+    if not legacy_search_service or not imagebind_search_service:
+        raise HTTPException(status_code=500, detail="Search services not initialized")
+
+    results = []
+
+    # Get results from both implementations
+    for service in [legacy_search_service, imagebind_search_service]:
+        start_time = time.time()
+        try:
+            service_results = service.search(
+                query_type=query.query_type,
+                query=query.query,
+                num_results=query.num_results,
+                min_similarity=query.min_similarity
+            )
+            search_time = time.time() - start_time
+
+            results.append(SearchResponse(
+                results=service_results,
+                total_results=len(service_results),
+                search_time=search_time,
+                service_type=service.__class__.__name__
+            ))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return results
+
+@app.post("/evaluate")
+async def evaluate_search(use_weights: bool = False) -> EvaluationResult:
+    try:
+        evaluator = SearchEvaluator("app/data/ground_truth.json")
+
+        legacy_metrics = evaluator.evaluate_search(legacy_search_service, use_weights)
+        imagebind_metrics = evaluator.evaluate_search(imagebind_search_service, use_weights)
+
+        return EvaluationResult(
+            legacy_metrics=legacy_metrics,
+            imagebind_metrics=imagebind_metrics,
+            timestamp=datetime.now()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+"""
