@@ -26,7 +26,13 @@ git clone https://github.com/yourusername/multimodal-search-poc-backend.git
 cd multimodal-search-poc-backend
 ```
 
-2. How to run
+2. Create virtual environment and Install dependencies 
+```bash
+python3.9 -m venv <virtual-env-name> # please note i have used python3.9.6, tried with python3.9.20 it was throwing some issues ( I am using mac with apple chip)
+source <virtual-env-name>/bin/activate
+pip install -r requirements.txt
+```
+3. How to run server
 ```bash
 cd /Users/aameer/Documents/Aameer/eco/zero/multimodal-search-poc-backend
 source ~/Documents/Aameer/eco/venv/bin/activate
