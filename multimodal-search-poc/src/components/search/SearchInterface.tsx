@@ -311,21 +311,33 @@ const SearchInterface = () => {
   // Update your handleSearch function:
   const handleSearch = async () => {
     if (!query.trim()) {
+      setIsSearching(false);
+      setDisplayedItems([]);
       return;
     }
-
+  
     setIsLoading(true);
     setIsSearching(true);
     
     try {
+      // Construct preferences based on current filter state
+      // const searchPreferences = {
+      //   brand_weights: {
+      //     [selectedBrand]: 0.8 // Give high weight to selected brand
+      //   },
+      //   price_range: priceRange,
+      //   preferred_colors: [], // Could be expanded with a color filter
+      //   category_weights: {} // Could be expanded with a category filter
+      // };
+  
       const response = await searchApi.textSearch(
-        query,
-        preferences,
-        filterAttributes
+        query, 
+        10, // numResults
+        0.0 // minSimilarity
       );
       
       if (Array.isArray(response)) {
-        const mappedResults = response.map((product) => ({
+        const mappedResults: SearchResult[] = response.map((product) => ({
           id: product.id || String(Math.random()),
           title: product.title || 'Untitled Product',
           brand: product.brand || 'Unknown Brand',
@@ -338,6 +350,9 @@ const SearchInterface = () => {
         
         setDisplayedItems(mappedResults);
         toast.success(`Found ${mappedResults.length} results`);
+      } else {
+        setDisplayedItems([]);
+        toast.info('No results found');
       }
     } catch (error) {
       console.error('Search error:', error);
@@ -346,7 +361,7 @@ const SearchInterface = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }
 
   const calculateSimilarity = (item: SearchResult, searchTerm: string): number => {
     const matchScore = [

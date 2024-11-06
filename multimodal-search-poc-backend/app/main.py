@@ -2,9 +2,9 @@
 # app/main.py
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Optional
 from fastapi import Form
 import json
 import time
@@ -58,26 +58,53 @@ async def get_products():
         return catalog
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-@app.post("/search", response_model=List[Product])
-async def search(query: SearchQuery):
-    if not search_service:
-        raise HTTPException(status_code=500, detail="Search service not initialized")
 
+@app.post("/search", response_model=List[Product])
+async def search(
+    query: SearchQuery,
+    user_id: Optional[int] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
     try:
-        search_results = search_service.search(
+        # Extract token from authorization header
+        token = None
+        if authorization and authorization.startswith("Token "):
+            token = authorization.split(" ")[1]
+
+        search_results = await search_service.search_with_auth(
             query_type=query.query_type,
             query=query.query,
             num_results=query.num_results,
             min_similarity=query.min_similarity,
-            user_preferences=query.preferences
+            user_preferences=query.preferences,
+            user_id=user_id,
+            auth_token=token
         )
-
-        # Extract just the products from the search results
-        products = [result.product for result in search_results]
-        return products
-
+        
+        return [result.product for result in search_results]
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+    
+# @app.post("/search", response_model=List[Product])
+# async def search(query: SearchQuery):
+#     if not search_service:
+#         raise HTTPException(status_code=500, detail="Search service not initialized")
+
+#     try:
+#         search_results = search_service.search(
+#             query_type=query.query_type,
+#             query=query.query,
+#             num_results=query.num_results,
+#             min_similarity=query.min_similarity,
+#             user_preferences=query.preferences
+#         )
+
+#         # Extract just the products from the search results
+#         products = [result.product for result in search_results]
+#         return products
+
+#     except Exception as e:
+#         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/search/image", response_model=List[Product])
 async def image_search(
