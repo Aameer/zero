@@ -26,7 +26,7 @@ app = FastAPI(title="Multimodal Search API")
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:8081", "http://localhost:19006"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -80,11 +80,11 @@ async def search(
             user_id=user_id,
             auth_token=token
         )
-        
+
         return [result.product for result in search_results]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 # @app.post("/search", response_model=List[Product])
 # async def search(query: SearchQuery):
 #     if not search_service:
