@@ -590,21 +590,43 @@ class EnhancedSearchService:
             logger.error(f"Error in image search: {str(e)}")
             raise
 
-    # Then update the _transcribe_audio method in the EnhancedSearchService class:
     def _transcribe_audio(self, audio_bytes: bytes) -> str:
-        """Transcribe audio to text, handling different audio formats"""
+        """Transcribe audio to text, handling different audio formats including WebM"""
         try:
-            # Convert audio bytes to numpy array
+            # First try to determine the format and convert if necessary
             try:
-                # First try loading with librosa which handles multiple formats
+                # Try to load with librosa which handles multiple formats
+                import io
+                import soundfile as sf
+                import numpy as np
+                from pydub import AudioSegment
+                import tempfile
+
+                # Create a temporary file to save the audio
+                with tempfile.NamedTemporaryFile(suffix='.webm', delete=True) as temp_webm:
+                    temp_webm.write(audio_bytes)
+                    temp_webm.flush()
+
+                    # Convert WebM to WAV using pydub
+                    audio = AudioSegment.from_file(temp_webm.name)
+
+                    # Create another temporary file for WAV
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=True) as temp_wav:
+                        audio.export(temp_wav.name, format='wav')
+
+                        # Now load the WAV file with librosa
+                        audio_array, sample_rate = librosa.load(
+                            temp_wav.name,
+                            sr=16000  # Whisper expects 16kHz
+                        )
+
+            except Exception as e:
+                # If conversion fails, try direct loading
+                logger.warning(f"WebM conversion failed, trying direct loading: {str(e)}")
                 audio_array, sample_rate = librosa.load(
                     io.BytesIO(audio_bytes),
-                    sr=16000,  # Whisper expects 16kHz
-                    mono=True
+                    sr=16000
                 )
-            except Exception as e:
-                logger.error(f"Error loading audio with librosa: {str(e)}")
-                raise RuntimeError(f"Could not process audio file: {str(e)}")
 
             # Convert to float32 and normalize
             audio_array = audio_array.astype(np.float32)

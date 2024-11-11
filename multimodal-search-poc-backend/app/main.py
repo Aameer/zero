@@ -4,7 +4,7 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Union
 from fastapi import Form
 import json
 import time
@@ -179,13 +179,12 @@ async def detailed_image_search(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 @app.post("/search/audio", response_model=List[Product])
 async def audio_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
-    num_results: int = 5,
-    min_similarity: float = 0.0
+    num_results: int = Form(5),
+    min_similarity: float = Form(0.0)
 ):
     # List of allowed audio MIME types
     allowed_audio_types = [
@@ -194,22 +193,28 @@ async def audio_search(
         'audio/wav',         # .wav
         'audio/wave',        # alternative for .wav
         'audio/x-wav',       # alternative for .wav
+        'audio/webm',        # .webm
         'audio/aac',         # .aac
         'audio/ogg',         # .ogg
-        'audio/webm',        # .webm
         'audio/x-m4a',       # .m4a
-        'audio/mp4'          # .mp4 audio
+        'audio/mp4',         # .mp4 audio
+        'application/octet-stream'  # Generic binary data
     ]
 
     # Check content type and filename extension
-    file_extension = file.filename.lower().split('.')[-1]
+    content_type = file.content_type or 'application/octet-stream'
+    file_extension = file.filename.lower().split('.')[-1] if '.' in file.filename else ''
+
     is_valid_extension = file_extension in ['mp3', 'wav', 'aac', 'ogg', 'webm', 'm4a', 'mp4']
-    is_valid_mime = file.content_type in allowed_audio_types
+    is_valid_mime = any(
+        allowed_type in content_type.lower()
+        for allowed_type in allowed_audio_types
+    )
 
     if not (is_valid_extension or is_valid_mime):
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid audio format. Supported formats: mp3, wav, aac, ogg, webm, m4a, mp4. Got content-type: {file.content_type}"
+            detail=f"Invalid audio format. Supported formats: mp3, wav, aac, ogg, webm, m4a, mp4. Got content-type: {content_type}"
         )
 
     try:
@@ -222,7 +227,11 @@ async def audio_search(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid preferences JSON")
 
+        # Read file content
         contents = await file.read()
+
+        logger.info(f"Processing audio file: size={len(contents)}, type={content_type}")
+
         search_results = search_service.search(
             query_type=SearchType.AUDIO,
             query=contents,
@@ -236,6 +245,7 @@ async def audio_search(
         return products
 
     except Exception as e:
+        logger.error(f"Error in audio search: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/search/audio/detailed", response_model=List[SearchResult])
