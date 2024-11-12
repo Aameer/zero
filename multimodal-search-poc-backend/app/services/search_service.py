@@ -98,11 +98,102 @@ class EnhancedSearchService:
         self._initialize_models()
 
     async def initialize(self):
-        """Async initialization method"""
-        logger.info("Starting async initialization...")
-        await self._init_multimodal_indexes()
-        self._init_attribute_indexes()
-        logger.info("Search service initialization complete!")
+        """Async initialization method with enhanced caching"""
+        try:
+            logger.info("Starting async initialization...")
+
+            # Check if we need to refresh embeddings
+            refresh_needed = self.cache_manager.should_refresh_embeddings(self.catalog)
+            
+            if not refresh_needed:
+                cached_embeddings = self.cache_manager.load_embeddings('multimodal', self.catalog)
+                if cached_embeddings is not None:
+                    logger.info("Loading embeddings from cache...")
+                    text_embeddings = cached_embeddings['text_embeddings']
+                    clip_embeddings = cached_embeddings['image_embeddings']
+                    
+                    # Create combined embeddings
+                    self.combined_embeddings = np.hstack([text_embeddings, clip_embeddings])
+                    self.combined_embeddings = np.ascontiguousarray(self.combined_embeddings, dtype=np.float32)
+                    
+                    # Create FAISS index
+                    self.combined_index = faiss.IndexFlatIP(self.combined_dimension)
+                    if len(self.combined_embeddings) > 0:
+                        self.combined_index.add(self.combined_embeddings)
+                    
+                    logger.info("Successfully loaded cached embeddings")
+                    return
+
+            logger.info("Computing new embeddings...")
+            
+            # Create text embeddings
+            product_texts = []
+            for p in self.products:
+                attribute_text = ' '.join([
+                    f"{key} {value}"
+                    for attr in p.attributes
+                    for key, value in attr.items()
+                ])
+                text = f"{p.title} {p.brand} {p.description} {attribute_text}"
+                product_texts.append(text)
+
+            # Process text embeddings in batches
+            batch_size = 32
+            text_embeddings = []
+            for i in range(0, len(product_texts), batch_size):
+                batch = product_texts[i:i + batch_size]
+                batch_embeddings = self.text_model.encode(batch)
+                text_embeddings.append(batch_embeddings)
+            
+            text_embeddings = np.vstack(text_embeddings).astype(np.float32)
+            
+            # Cache images and compute CLIP embeddings
+            logger.info("Processing and caching images...")
+            await self.cache_manager.cache_images_batch(self.products)
+            
+            # Process images with cached files
+            clip_embeddings = []
+            for product in self.products:
+                image_path = self.cache_manager.get_image_path(product.id)
+                if image_path.exists():
+                    try:
+                        image = Image.open(image_path).convert('RGB')
+                        inputs = self.clip_processor(images=image, return_tensors="pt")
+                        with torch.no_grad():
+                            image_embedding = self.clip_model.get_image_features(**inputs)
+                        clip_embeddings.append(image_embedding[0].cpu().numpy())
+                    except Exception as e:
+                        logger.error(f"Error processing cached image for {product.id}: {e}")
+                        clip_embeddings.append(np.zeros(self.clip_dimension))
+                else:
+                    clip_embeddings.append(np.zeros(self.clip_dimension))
+            
+            clip_embeddings = np.vstack(clip_embeddings).astype(np.float32)
+            
+            # Save embeddings to cache
+            self.cache_manager.save_embeddings(
+                {
+                    'text_embeddings': text_embeddings,
+                    'image_embeddings': clip_embeddings
+                },
+                'multimodal',
+                self.catalog
+            )
+            
+            # Create combined embeddings and index
+            self.combined_embeddings = np.hstack([text_embeddings, clip_embeddings])
+            self.combined_embeddings = np.ascontiguousarray(self.combined_embeddings, dtype=np.float32)
+            
+            # Create FAISS index
+            self.combined_index = faiss.IndexFlatIP(self.combined_dimension)
+            if len(self.combined_embeddings) > 0:
+                self.combined_index.add(self.combined_embeddings)
+            
+            logger.info("Search service initialization complete!")
+            
+        except Exception as e:
+            logger.error(f"Error in initialization: {e}")
+            raise
 
     def _initialize_models(self):
         """Initialize all required models with error handling"""
