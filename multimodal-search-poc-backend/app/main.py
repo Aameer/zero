@@ -58,6 +58,22 @@ async def get_products():
         return catalog
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/product/{id}", response_model=Product)
+async def get_product(id: str):
+    try:
+        with open("app/data/catalog.json", "r") as f:
+            catalog = json.load(f)
+
+        product = next((item for item in catalog if item["id"] == id), None)
+        
+        if product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+        
+        return product
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/search", response_model=List[Product])
 async def search(query: SearchQuery):
     if not search_service:
