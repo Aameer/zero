@@ -50,6 +50,18 @@ async def startup_event():
         logger.error(f"Error during startup: {e}")
         raise
 
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "message": "Service is up and running"}
+
+@app.get("/")
+async def home():
+    return {
+        "service": "Search API",
+        "status": "operational",
+        "message": "Welcome to Search API service"
+    }
+
 @app.get("/products", response_model=List[Product])
 async def get_products():
     try:
@@ -66,10 +78,10 @@ async def get_product(id: str):
             catalog = json.load(f)
 
         product = next((item for item in catalog if item["id"] == id), None)
-        
+
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
-        
+
         return product
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
