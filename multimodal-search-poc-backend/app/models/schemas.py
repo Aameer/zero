@@ -128,6 +128,7 @@ class SearchQuery(BaseModel):
         default=None,
         description="Filter results by specific attributes"
     )
+    user_id: Optional[int] = None
 
 class SearchResponse(BaseModel):
     results: List[SearchResult]

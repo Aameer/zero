@@ -37,7 +37,7 @@ from transformers import (
 from app.models.schemas import SearchType, SearchResult, Product, UserPreferences
 from app.config.search_config import SearchConfig  # Make sure this import works
 from app.utils.cache import CacheManager
-
+from app.config.settings import settings
 # Set up logger
 logger = logging.getLogger(__name__)
 
@@ -95,9 +95,10 @@ class StoredPreferences(BaseModel):
 
 class PreferencesFetcher:
     """Service to fetch user preferences from API"""
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str):
         self.base_url = base_url
         self.session = None
+        logger.info(f"Initialized PreferencesFetcher with base URL: {base_url}")
 
     async def __aenter__(self):
         self.session = aiohttp.ClientSession()
@@ -116,7 +117,7 @@ class PreferencesFetcher:
             headers = {
                 "Authorization": f"Token {token}",
                 "Content-Type": "application/json",
-                "accept": "application/json"
+                "Accept": "application/json"
             }
             
             async with self.session.get(
@@ -126,8 +127,7 @@ class PreferencesFetcher:
                 if response.status == 200:
                     data = await response.json()
                     shopping_prefs = data.get("shopping_preferences", {})
-                    
-                    # Convert the shopping preferences to our structured format
+                    logger.info(f"Retrieved preferences for user {user_id}: {shopping_prefs}")
                     return StoredPreferences(**shopping_prefs)
                 else:
                     logger.error(f"Failed to fetch preferences: {response.status}")
@@ -136,20 +136,32 @@ class PreferencesFetcher:
         except Exception as e:
             logger.error(f"Error fetching user preferences: {str(e)}")
             return None
-        
+        finally:
+            if self.session:
+                await self.session.close()
+                self.session = None
+
 class EnhancedSearchService:
     def __init__(self, catalog: List[Dict], base_url: str = "http://localhost:8000"):
         """Initialize search service with API integration"""
         self.catalog = catalog
         self.products = [Product(**p) for p in catalog]
+        
+        # Initialize preferences fetcher with base_url
+        logger.info(f"Initializing EnhancedSearchService with base URL: {base_url}")
         self.preferences_fetcher = PreferencesFetcher(base_url)
         
-        # Rest of the initialization code remains the same
+        # Initialize cache manager
         from app.config.settings import settings
         self.cache_manager = CacheManager(settings)
+        
+        # Set batch size constants
         self.IMAGE_BATCH_SIZE = getattr(SearchConfig, 'IMAGE_BATCH_SIZE', 16)
         self.MAX_IMAGES_PER_PRODUCT = getattr(SearchConfig, 'MAX_IMAGES_PER_PRODUCT', 3)
+        
+        # Initialize models
         self._initialize_models()
+    
     def _convert_stored_to_user_preferences(
         self,
         stored_prefs: StoredPreferences
@@ -209,11 +221,102 @@ class EnhancedSearchService:
         return affinity_score
 
     async def initialize(self):
-        """Async initialization method"""
-        logger.info("Starting async initialization...")
-        await self._init_multimodal_indexes()
-        self._init_attribute_indexes()
-        logger.info("Search service initialization complete!")
+        """Async initialization method with enhanced caching"""
+        try:
+            logger.info("Starting async initialization...")
+
+            # Check if we need to refresh embeddings
+            refresh_needed = self.cache_manager.should_refresh_embeddings(self.catalog)
+            
+            if not refresh_needed:
+                cached_embeddings = self.cache_manager.load_embeddings('multimodal', self.catalog)
+                if cached_embeddings is not None:
+                    logger.info("Loading embeddings from cache...")
+                    text_embeddings = cached_embeddings['text_embeddings']
+                    clip_embeddings = cached_embeddings['image_embeddings']
+                    
+                    # Create combined embeddings
+                    self.combined_embeddings = np.hstack([text_embeddings, clip_embeddings])
+                    self.combined_embeddings = np.ascontiguousarray(self.combined_embeddings, dtype=np.float32)
+                    
+                    # Create FAISS index
+                    self.combined_index = faiss.IndexFlatIP(self.combined_dimension)
+                    if len(self.combined_embeddings) > 0:
+                        self.combined_index.add(self.combined_embeddings)
+                    
+                    logger.info("Successfully loaded cached embeddings")
+                    return
+
+            logger.info("Computing new embeddings...")
+            
+            # Create text embeddings
+            product_texts = []
+            for p in self.products:
+                attribute_text = ' '.join([
+                    f"{key} {value}"
+                    for attr in p.attributes
+                    for key, value in attr.items()
+                ])
+                text = f"{p.title} {p.brand} {p.description} {attribute_text}"
+                product_texts.append(text)
+
+            # Process text embeddings in batches
+            batch_size = 32
+            text_embeddings = []
+            for i in range(0, len(product_texts), batch_size):
+                batch = product_texts[i:i + batch_size]
+                batch_embeddings = self.text_model.encode(batch)
+                text_embeddings.append(batch_embeddings)
+            
+            text_embeddings = np.vstack(text_embeddings).astype(np.float32)
+            
+            # Cache images and compute CLIP embeddings
+            logger.info("Processing and caching images...")
+            await self.cache_manager.cache_images_batch(self.products)
+            
+            # Process images with cached files
+            clip_embeddings = []
+            for product in self.products:
+                image_path = self.cache_manager.get_image_path(product.id)
+                if image_path.exists():
+                    try:
+                        image = Image.open(image_path).convert('RGB')
+                        inputs = self.clip_processor(images=image, return_tensors="pt")
+                        with torch.no_grad():
+                            image_embedding = self.clip_model.get_image_features(**inputs)
+                        clip_embeddings.append(image_embedding[0].cpu().numpy())
+                    except Exception as e:
+                        logger.error(f"Error processing cached image for {product.id}: {e}")
+                        clip_embeddings.append(np.zeros(self.clip_dimension))
+                else:
+                    clip_embeddings.append(np.zeros(self.clip_dimension))
+            
+            clip_embeddings = np.vstack(clip_embeddings).astype(np.float32)
+            
+            # Save embeddings to cache
+            self.cache_manager.save_embeddings(
+                {
+                    'text_embeddings': text_embeddings,
+                    'image_embeddings': clip_embeddings
+                },
+                'multimodal',
+                self.catalog
+            )
+            
+            # Create combined embeddings and index
+            self.combined_embeddings = np.hstack([text_embeddings, clip_embeddings])
+            self.combined_embeddings = np.ascontiguousarray(self.combined_embeddings, dtype=np.float32)
+            
+            # Create FAISS index
+            self.combined_index = faiss.IndexFlatIP(self.combined_dimension)
+            if len(self.combined_embeddings) > 0:
+                self.combined_index.add(self.combined_embeddings)
+            
+            logger.info("Search service initialization complete!")
+            
+        except Exception as e:
+            logger.error(f"Error in initialization: {e}")
+            raise
 
     def _initialize_models(self):
         """Initialize all required models with error handling"""
@@ -708,6 +811,7 @@ class EnhancedSearchService:
 
             # Brand preference
             if preferences.brand_weights and product.brand in preferences.brand_weights:
+                logger.info(f"boosting {preferences.brand_weights[product.brand]} with {weights['brand']}, boost_multiplier :{boost_multiplier}")
                 brand_boost = preferences.brand_weights[product.brand] * weights['brand']
                 boost_multiplier += brand_boost
 
@@ -813,15 +917,20 @@ class EnhancedSearchService:
     ) -> List[SearchResult]:
         """Enhanced search incorporating API-fetched preferences"""
         stored_preferences = None
-        
+
+        #logger.info(f"Main search checking if user_id and auth_token are present?")
         if user_id and auth_token:
-            async with PreferencesFetcher() as fetcher:
+            #logger.info(f" found user id : {user_id} and auth token : {auth_token}\n")
+            async with PreferencesFetcher(base_url=settings.BACKEND_URL) as fetcher:
                 stored_prefs = await fetcher.get_user_preferences(user_id, auth_token)
                 if stored_prefs:
                     stored_preferences = self._convert_stored_to_user_preferences(stored_prefs)
+                    #logger.info(f"gotten stored preferences {stored_preferences}\n")
 
         # Combine stored and request preferences
-        combined_preferences = self._combine_preferences(stored_preferences, user_preferences)
+        # TODO: combined preferences arent working well - for now diabling them - get from users stored preferences only.
+        # combined_preferences = self._combine_preferences(stored_preferences, user_preferences)
+        # logger.info(f"gotten combined preferences {combined_preferences}\n")
 
         # Use the combined preferences in search
         return self.search(
@@ -829,7 +938,7 @@ class EnhancedSearchService:
             query=query,
             num_results=num_results,
             min_similarity=min_similarity,
-            user_preferences=combined_preferences
+            user_preferences=stored_preferences
         )
     
     def search(
@@ -842,7 +951,7 @@ class EnhancedSearchService:
     ) -> List[SearchResult]:
         """Enhanced multimodal search with query expansion and result diversification"""
         try:
-            logger.info(f"Searching with preferences: {user_preferences}")
+            logger.info(f"\n-->Searching with preferences: {user_preferences}\n")
         
             # Get raw search results based on query type
             if query_type == SearchType.TEXT:
@@ -978,21 +1087,43 @@ class EnhancedSearchService:
             logger.error(f"Error in image search: {str(e)}")
             raise
 
-    # Then update the _transcribe_audio method in the EnhancedSearchService class:
     def _transcribe_audio(self, audio_bytes: bytes) -> str:
-        """Transcribe audio to text, handling different audio formats"""
+        """Transcribe audio to text, handling different audio formats including WebM"""
         try:
-            # Convert audio bytes to numpy array
+            # First try to determine the format and convert if necessary
             try:
-                # First try loading with librosa which handles multiple formats
+                # Try to load with librosa which handles multiple formats
+                import io
+                import soundfile as sf
+                import numpy as np
+                from pydub import AudioSegment
+                import tempfile
+
+                # Create a temporary file to save the audio
+                with tempfile.NamedTemporaryFile(suffix='.webm', delete=True) as temp_webm:
+                    temp_webm.write(audio_bytes)
+                    temp_webm.flush()
+
+                    # Convert WebM to WAV using pydub
+                    audio = AudioSegment.from_file(temp_webm.name)
+
+                    # Create another temporary file for WAV
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=True) as temp_wav:
+                        audio.export(temp_wav.name, format='wav')
+
+                        # Now load the WAV file with librosa
+                        audio_array, sample_rate = librosa.load(
+                            temp_wav.name,
+                            sr=16000  # Whisper expects 16kHz
+                        )
+
+            except Exception as e:
+                # If conversion fails, try direct loading
+                logger.warning(f"WebM conversion failed, trying direct loading: {str(e)}")
                 audio_array, sample_rate = librosa.load(
                     io.BytesIO(audio_bytes),
-                    sr=16000,  # Whisper expects 16kHz
-                    mono=True
+                    sr=16000
                 )
-            except Exception as e:
-                logger.error(f"Error loading audio with librosa: {str(e)}")
-                raise RuntimeError(f"Could not process audio file: {str(e)}")
 
             # Convert to float32 and normalize
             audio_array = audio_array.astype(np.float32)
