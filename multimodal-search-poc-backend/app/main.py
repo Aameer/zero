@@ -1,11 +1,9 @@
 # app/main.py
-# app/main.py
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.NotOpenSSLWarning)
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Form
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Union
-from fastapi import Form
 import json
 import time
 import logging
@@ -26,7 +24,7 @@ app = FastAPI(title="Multimodal Search API")
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8081", "http://localhost:19006", "http://localhost:8081", "http://localhost:19006", "https://app.zerotab.app"],
+    allow_origins=["http://localhost:3000", "http://localhost:8081", "http://localhost:19006", "https://app.zerotab.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -80,7 +78,6 @@ async def get_products():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/product/{id}", response_model=Product)
 async def get_product(id: str):
     try:
@@ -88,21 +85,19 @@ async def get_product(id: str):
             catalog = json.load(f)
 
         product = next((item for item in catalog if item["id"] == id), None)
-
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
-
         return product
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Text Search Endpoints
 @app.post("/search", response_model=List[Product])
 async def search(
     query: SearchQuery,
     authorization: Optional[str] = Header(None)
 ):
     try:
-        # Extract token from authorization header
         token = None
         if authorization and authorization.startswith("Token "):
             token = authorization.split(" ")[1]
@@ -121,30 +116,40 @@ async def search(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# New endpoint to get search results with similarity scores
 @app.post("/search/detailed", response_model=List[SearchResult])
-async def detailed_search(query: SearchQuery):
+async def detailed_search(
+    query: SearchQuery,
+    authorization: Optional[str] = Header(None)
+):
     if not search_service:
         raise HTTPException(status_code=500, detail="Search service not initialized")
 
     try:
-        results = search_service.search(
+        token = None
+        if authorization and authorization.startswith("Token "):
+            token = authorization.split(" ")[1]
+
+        return await search_service.search_with_auth(
             query_type=query.query_type,
             query=query.query,
             num_results=query.num_results,
             min_similarity=query.min_similarity,
-            user_preferences=query.preferences
+            user_preferences=query.preferences,
+            user_id=query.user_id,
+            auth_token=token
         )
-        return results
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+# Image Search Endpoints
 @app.post("/search/image", response_model=List[Product])
 async def image_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
-    num_results: int = 5,
-    min_similarity: float = 0.0
+    num_results: int = Form(5),
+    min_similarity: float = Form(0.0),
+    user_id: Optional[int] = Form(None),
+    authorization: Optional[str] = Header(None)
 ):
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
@@ -159,28 +164,36 @@ async def image_search(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid preferences JSON")
 
+        # Extract token from authorization header
+        token = None
+        if authorization and authorization.startswith("Token "):
+            token = authorization.split(" ")[1]
+
         contents = await file.read()
-        search_results = search_service.search(
+        search_results = await search_service.search_with_auth(
             query_type=SearchType.IMAGE,
             query=contents,
             num_results=num_results,
             min_similarity=min_similarity,
-            user_preferences=user_preferences
+            user_preferences=user_preferences,
+            user_id=user_id,
+            auth_token=token
         )
 
-        # Extract just the products from the search results
-        products = [result.product for result in search_results]
-        return products
+        return [result.product for result in search_results]
 
     except Exception as e:
+        logger.error(f"Error in image search: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/search/image/detailed", response_model=List[SearchResult])
 async def detailed_image_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
-    num_results: int = 5,
-    min_similarity: float = 0.0
+    num_results: int = Form(5),
+    min_similarity: float = Form(0.0),
+    user_id: Optional[int] = Form(None),
+    authorization: Optional[str] = Header(None)
 ):
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
@@ -194,25 +207,34 @@ async def detailed_image_search(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid preferences JSON")
 
+        # Extract token from authorization header
+        token = None
+        if authorization and authorization.startswith("Token "):
+            token = authorization.split(" ")[1]
+
         contents = await file.read()
-        return search_service.search(
+        return await search_service.search_with_auth(
             query_type=SearchType.IMAGE,
             query=contents,
             num_results=num_results,
             min_similarity=min_similarity,
-            user_preferences=user_preferences
+            user_preferences=user_preferences,
+            user_id=user_id,
+            auth_token=token
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
+# Audio Search Endpoints
 @app.post("/search/audio", response_model=List[Product])
 async def audio_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
     num_results: int = Form(5),
-    min_similarity: float = Form(0.0)
+    min_similarity: float = Form(0.0),
+    user_id: Optional[int] = Form(None),
+    authorization: Optional[str] = Header(None)
 ):
-    # List of allowed audio MIME types
     allowed_audio_types = [
         'audio/mpeg',        # .mp3
         'audio/mp3',         # alternative for .mp3
@@ -227,7 +249,6 @@ async def audio_search(
         'application/octet-stream'  # Generic binary data
     ]
 
-    # Check content type and filename extension
     content_type = file.content_type or 'application/octet-stream'
     file_extension = file.filename.lower().split('.')[-1] if '.' in file.filename else ''
 
@@ -244,7 +265,6 @@ async def audio_search(
         )
 
     try:
-        # Parse preferences JSON if provided
         user_preferences = None
         if preferences:
             try:
@@ -253,22 +273,24 @@ async def audio_search(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid preferences JSON")
 
-        # Read file content
-        contents = await file.read()
+        token = None
+        if authorization and authorization.startswith("Token "):
+            token = authorization.split(" ")[1]
 
+        contents = await file.read()
         logger.info(f"Processing audio file: size={len(contents)}, type={content_type}")
 
-        search_results = search_service.search(
+        search_results = await search_service.search_with_auth(
             query_type=SearchType.AUDIO,
             query=contents,
             num_results=num_results,
             min_similarity=min_similarity,
-            user_preferences=user_preferences
+            user_preferences=user_preferences,
+            user_id=user_id,
+            auth_token=token
         )
 
-        # Extract just the products from the search results
-        products = [result.product for result in search_results]
-        return products
+        return [result.product for result in search_results]
 
     except Exception as e:
         logger.error(f"Error in audio search: {str(e)}")
@@ -278,24 +300,24 @@ async def audio_search(
 async def detailed_audio_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
-    num_results: int = 5,
-    min_similarity: float = 0.0
+    num_results: int = Form(5),
+    min_similarity: float = Form(0.0),
+    user_id: Optional[int] = Form(None),
+    authorization: Optional[str] = Header(None)
 ):
-    # List of allowed audio MIME types
     allowed_audio_types = [
-        'audio/mpeg',        # .mp3
-        'audio/mp3',         # alternative for .mp3
-        'audio/wav',         # .wav
-        'audio/wave',        # alternative for .wav
-        'audio/x-wav',       # alternative for .wav
-        'audio/aac',         # .aac
-        'audio/ogg',         # .ogg
-        'audio/webm',        # .webm
-        'audio/x-m4a',       # .m4a
-        'audio/mp4'          # .mp4 audio
+        'audio/mpeg',
+        'audio/mp3',
+        'audio/wav',
+        'audio/wave',
+        'audio/x-wav',
+        'audio/aac',
+        'audio/ogg',
+        'audio/webm',
+        'audio/x-m4a',
+        'audio/mp4'
     ]
 
-    # Check content type and filename extension
     file_extension = file.filename.lower().split('.')[-1]
     is_valid_extension = file_extension in ['mp3', 'wav', 'aac', 'ogg', 'webm', 'm4a', 'mp4']
     is_valid_mime = file.content_type in allowed_audio_types
@@ -307,7 +329,6 @@ async def detailed_audio_search(
         )
 
     try:
-        # Parse preferences JSON if provided
         user_preferences = None
         if preferences:
             try:
@@ -316,13 +337,19 @@ async def detailed_audio_search(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid preferences JSON")
 
+        token = None
+        if authorization and authorization.startswith("Token "):
+            token = authorization.split(" ")[1]
+
         contents = await file.read()
-        return search_service.search(
+        return await search_service.search_with_auth(
             query_type=SearchType.AUDIO,
             query=contents,
             num_results=num_results,
             min_similarity=min_similarity,
-            user_preferences=user_preferences
+            user_preferences=user_preferences,
+            user_id=user_id,
+            auth_token=token
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
