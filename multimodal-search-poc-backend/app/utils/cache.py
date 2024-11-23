@@ -211,4 +211,3 @@ class CacheManager:
         except Exception as e:
             logger.error(f"Error loading embeddings from cache: {e}")
             return None
-
