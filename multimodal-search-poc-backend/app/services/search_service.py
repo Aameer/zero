@@ -67,7 +67,7 @@ class SearchWeights:
     BASE_WEIGHTS = {
         'similarity': 1.0,
         'brand': 0.8,
-        'price': 0.6,
+        'price': 0.9,
         'color': 0.7,
         'category': 0.5,
         'seasonal': 0.4,
@@ -120,17 +120,30 @@ class PreferencesFetcher:
                 "Accept": "application/json"
             }
             
-            async with self.session.get(
-                f"{self.base_url}/api/users/{user_id}/",
-                headers=headers
-            ) as response:
+            url = settings.get_user_preferences_url(user_id)
+            logger.info(f"Fetching preferences from: {url}")
+            
+            async with self.session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
                     shopping_prefs = data.get("shopping_preferences", {})
-                    logger.info(f"Retrieved preferences for user {user_id}: {shopping_prefs}")
-                    return StoredPreferences(**shopping_prefs)
+                    logger.info(f"Raw shopping preferences from API: {shopping_prefs}")
+                    
+                    # Create StoredPreferences with the actual data
+                    return StoredPreferences(
+                        brand_affinities=shopping_prefs.get('brand_affinities', {}),
+                        color_preferences=shopping_prefs.get('color_preferences', []),
+                        size_preferences=shopping_prefs.get('size_preferences', []),
+                        fabric_preferences=shopping_prefs.get('fabric_preferences', []),
+                        category_preferences=shopping_prefs.get('category_preferences', {}),
+                        price_range=shopping_prefs.get('price_range'),
+                        style_preferences=shopping_prefs.get('style_preferences', []),
+                        seasonal_preferences=shopping_prefs.get('seasonal_preferences', []),
+                        purchase_history_categories=shopping_prefs.get('purchase_history_categories', {})
+                    )
                 else:
                     logger.error(f"Failed to fetch preferences: {response.status}")
+                    logger.error(f"Response text: {await response.text()}")
                     return None
 
         except Exception as e:
@@ -167,22 +180,42 @@ class EnhancedSearchService:
         stored_prefs: StoredPreferences
     ) -> UserPreferences:
         """Convert stored preferences to search preferences"""
-        price_range = None
-        if stored_prefs.price_range:
-            price_range = (
-                stored_prefs.price_range["min"],
-                stored_prefs.price_range["max"]
-            )
+        try:
+            logger.info(f"Converting stored preferences: {stored_prefs}")
+            
+            price_range = None
+            if stored_prefs.price_range:
+                price_range = (
+                    stored_prefs.price_range["min"],
+                    stored_prefs.price_range["max"]
+                )
+                logger.info(f"Converted price range: {price_range}")
 
-        return UserPreferences(
-            brand_weights=stored_prefs.brand_affinities,
-            price_range=price_range,
-            preferred_colors=stored_prefs.color_preferences,
-            category_weights=stored_prefs.category_preferences,
-            size_preference=stored_prefs.size_preferences,
-            fabric_preference=stored_prefs.fabric_preferences,
-            seasonal_preference=stored_prefs.seasonal_preferences[0] if stored_prefs.seasonal_preferences else None
-        )
+            user_prefs = UserPreferences(
+                brand_weights=stored_prefs.brand_affinities,
+                price_range=price_range,
+                preferred_colors=stored_prefs.color_preferences,
+                category_weights=stored_prefs.category_preferences,
+                size_preference=stored_prefs.size_preferences,
+                fabric_preference=stored_prefs.fabric_preferences,
+                seasonal_preference=stored_prefs.seasonal_preferences[0] if stored_prefs.seasonal_preferences else None
+            )
+            
+            logger.info(f"Converted to user preferences: {user_prefs}")
+            return user_prefs
+
+        except Exception as e:
+            logger.error(f"Error converting preferences: {e}")
+            # Return default preferences
+            return UserPreferences(
+                brand_weights={},
+                price_range=None,
+                preferred_colors=[],
+                category_weights={},
+                size_preference=[],
+                fabric_preference=[],
+                seasonal_preference=None
+            )
     
     def _calculate_user_affinity_score(
         self,
@@ -791,12 +824,23 @@ class EnhancedSearchService:
         indices: np.ndarray,
         preferences: UserPreferences
     ) -> List[tuple[int, float]]:
-        """Apply enhanced user preferences with multiple factors"""
+        """Apply enhanced user preferences with stronger weighting"""
         if not preferences:
             return [(idx, score) for score, idx in zip(base_scores[0], indices[0])]
 
         results = []
         current_season = SeasonalWeights.get_current_season()
+
+        # Increase base weights to make preferences more impactful
+        weights = {
+            'similarity': 1.0,
+            'brand': 2.0,      # Increased from 0.8
+            'price': 1.5,      # Increased from 0.9
+            'color': 1.5,      # Increased from 0.7
+            'category': 1.2,   # Increased from 0.5
+            'seasonal': 1.0,   # Increased from 0.4
+            'attribute': 0.8   # Increased from 0.3
+        }
 
         for score, idx in zip(base_scores[0], indices[0]):
             if idx >= len(self.products):
@@ -804,27 +848,31 @@ class EnhancedSearchService:
 
             product = self.products[idx]
             final_score = float(score)  # Base similarity score
-            boost_multiplier = 1.0  # Start with neutral multiplier
-
-            # Apply weighted preferences as boosters
-            weights = SearchWeights.BASE_WEIGHTS
-
-            # Brand preference
+            
+            # Log initial score for debugging
+            logger.info(f"Initial score for product {product.id}: {final_score}")
+            
+            # Brand preference with stronger impact
             if preferences.brand_weights and product.brand in preferences.brand_weights:
-                logger.info(f"boosting {preferences.brand_weights[product.brand]} with {weights['brand']}, boost_multiplier :{boost_multiplier}")
                 brand_boost = preferences.brand_weights[product.brand] * weights['brand']
-                boost_multiplier += brand_boost
+                final_score *= (1.0 + brand_boost)
+                logger.info(f"After brand boost ({product.brand}): {final_score}")
 
-            # Price range preference - soft boost instead of strict filtering
+            # Price range preference with gradual penalty
             if preferences.price_range:
                 min_price, max_price = preferences.price_range
                 if min_price <= product.price <= max_price:
-                    boost_multiplier += weights['price']
+                    final_score *= (1.0 + weights['price'])
+                    logger.info(f"In price range boost: {final_score}")
                 else:
-                    # Small penalty for being outside range, but don't exclude
-                    price_distance = min(abs(product.price - min_price), abs(product.price - max_price))
-                    price_penalty = min(0.5, price_distance / max_price)  # Cap the penalty
-                    boost_multiplier *= (1.0 - price_penalty)
+                    # Calculate distance from preferred range
+                    if product.price < min_price:
+                        distance = (min_price - product.price) / min_price
+                    else:
+                        distance = (product.price - max_price) / max_price
+                    penalty = min(0.8, distance)  # Cap penalty at 80%
+                    final_score *= (1.0 - penalty)
+                    logger.info(f"Price penalty applied: {final_score}")
 
             # Color preference with semantic matching
             if preferences.preferred_colors:
@@ -832,54 +880,35 @@ class EnhancedSearchService:
                     attr['Color'] for attr in product.attributes
                     if 'Color' in attr
                 ]
-
                 for preferred_color in preferences.preferred_colors:
                     similar_colors = SearchWeights.COLOR_SIMILARITY.get(preferred_color.lower(), [])
                     if any(color.lower() in [preferred_color.lower()] + similar_colors
                         for color in product_colors):
-                        boost_multiplier += weights['color']
-                        break  # Only boost once for color match
+                        final_score *= (1.0 + weights['color'])
+                        logger.info(f"Color match boost: {final_score}")
+                        break
 
-            # Category preference
+            # Category preference with stronger impact
             if preferences.category_weights and product.category in preferences.category_weights:
                 category_boost = preferences.category_weights[product.category] * weights['category']
-                boost_multiplier += category_boost
+                final_score *= (1.0 + category_boost)
+                logger.info(f"Category boost: {final_score}")
 
-            # Seasonal boost
+            # Seasonal preference
             product_season = next((attr['Season'] for attr in product.attributes
                                 if 'Season' in attr), None)
             if product_season and product_season.upper() == current_season:
-                boost_multiplier += SeasonalWeights.SEASONS[current_season]['boost'] - 1.0  # Adjust boost to be additive
+                final_score *= (1.0 + weights['seasonal'])
+                logger.info(f"Seasonal boost: {final_score}")
 
-            # Apply final boost multiplier to score
-            final_score *= boost_multiplier
-
+            # Log final score for debugging
+            logger.info(f"Final score for product {product.id}: {final_score}")
             results.append((idx, final_score))
 
-        # Sort by final score but keep all results
+        # Sort by final score
         results.sort(key=lambda x: x[1], reverse=True)
         
-        # Only apply diversity to maintain order but not remove items
-        diversity_threshold = 0.95  # Higher threshold to be more lenient
-        diversified_order = []
-        remaining = set(range(len(results)))
-        
-        # First, add highly similar items
-        while remaining:
-            max_score = -1
-            best_idx = None
-            
-            for i in remaining:
-                idx, score = results[i]
-                if score > max_score:
-                    max_score = score
-                    best_idx = i
-                    
-            if best_idx is not None:
-                diversified_order.append(results[best_idx])
-                remaining.remove(best_idx)
-        
-        return diversified_order
+        return results
 
     def _expand_query(self, query: str) -> str:
         """Expand query with related terms"""
@@ -917,29 +946,45 @@ class EnhancedSearchService:
     ) -> List[SearchResult]:
         """Enhanced search incorporating API-fetched preferences"""
         stored_preferences = None
-
-        #logger.info(f"Main search checking if user_id and auth_token are present?")
+        
+        logger.info(f"Starting search with auth for user {user_id}")
+        
         if user_id and auth_token:
-            #logger.info(f" found user id : {user_id} and auth token : {auth_token}\n")
+            logger.info(f"Fetching preferences for user {user_id}")
             async with PreferencesFetcher(base_url=settings.BACKEND_URL) as fetcher:
                 stored_prefs = await fetcher.get_user_preferences(user_id, auth_token)
                 if stored_prefs:
+                    logger.info(f"Successfully fetched preferences: {stored_prefs}")
                     stored_preferences = self._convert_stored_to_user_preferences(stored_prefs)
-                    #logger.info(f"gotten stored preferences {stored_preferences}\n")
-
-        # Combine stored and request preferences
-        # TODO: combined preferences arent working well - for now diabling them - get from users stored preferences only.
-        # combined_preferences = self._combine_preferences(stored_preferences, user_preferences)
-        # logger.info(f"gotten combined preferences {combined_preferences}\n")
-
-        # Use the combined preferences in search
-        return self.search(
-            query_type=query_type,
-            query=query,
-            num_results=num_results,
-            min_similarity=min_similarity,
-            user_preferences=stored_preferences
-        )
+                    logger.info(f"Converted to user preferences: {stored_preferences}")
+                else:
+                    logger.warning("No stored preferences found")
+        
+        if stored_preferences:
+            # Combine with any request preferences if provided
+            final_preferences = stored_preferences
+            if user_preferences:
+                final_preferences = self._combine_preferences(stored_preferences, user_preferences)
+                logger.info(f"Combined preferences: {final_preferences}")
+            
+            logger.info(f"Using preferences for search: {final_preferences}")
+            return self.search(
+                query_type=query_type,
+                query=query,
+                num_results=num_results,
+                min_similarity=min_similarity,
+                user_preferences=final_preferences
+            )
+        else:
+            # Use request preferences if no stored preferences
+            logger.info("No stored preferences available, using request preferences")
+            return self.search(
+                query_type=query_type,
+                query=query,
+                num_results=num_results,
+                min_similarity=min_similarity,
+                user_preferences=user_preferences
+            )
     
     def search(
         self,
