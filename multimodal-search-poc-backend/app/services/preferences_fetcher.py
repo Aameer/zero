@@ -53,6 +53,9 @@ class PreferencesFetcher:
                     shopping_prefs = data.get("shopping_preferences", {})
                     return StoredPreferences(**shopping_prefs)
                 else:
+                    import pprint
+                    logger.debug(">"*100)
+                    pprint.pp(response)
                     logger.error(f"Failed to fetch preferences: {response.status}")
                     return None
 
