@@ -7,6 +7,9 @@ from typing import List, Optional, Union
 import json
 import time
 import logging
+from typing import List, Optional
+from fastapi import Query, HTTPException
+
 
 from app.models.schemas import (
     Product, SearchQuery, SearchResponse, SearchType,
@@ -78,16 +81,15 @@ async def get_products():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/product/{id}", response_model=Product)
-async def get_product(id: str):
+@app.get("/products", response_model=List[Product])
+async def get_products(
+    skip: int = Query(default=0, ge=0, description="Number of products to skip"),
+    limit: int = Query(default=100, ge=1, le=1000, description="Maximum number of products to return")
+):
     try:
         with open("app/data/catalog.json", "r") as f:
             catalog = json.load(f)
-
-        product = next((item for item in catalog if item["id"] == id), None)
-        if product is None:
-            raise HTTPException(status_code=404, detail="Product not found")
-        return product
+        return catalog[skip : skip + limit]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
