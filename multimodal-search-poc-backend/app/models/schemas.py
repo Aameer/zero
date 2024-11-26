@@ -68,7 +68,12 @@ class UserPreferences(BaseModel):
         return v
 
 class Product(BaseModel):
-    id: UUID
+    id: str #UUID
+    """
+    I've temporarily made this into a string just because we have data coming in from
+    a json file at this time. When we have data coming in from the DB, we will have
+    one univerally agreed upon ID format to then utilize in this field's type.
+    """
     title: str
     brand: str
     price: float
