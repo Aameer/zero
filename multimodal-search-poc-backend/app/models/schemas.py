@@ -68,16 +68,11 @@ class UserPreferences(BaseModel):
         return v
 
 class Product(BaseModel):
-    id: str #UUID
-    """
-    I've temporarily made this into a string just because we have data coming in from
-    a json file at this time. When we have data coming in from the DB, we will have
-    one univerally agreed upon ID format to then utilize in this field's type.
-    """
+    id: str  # UUID temporarily as string
     title: str
     brand: str
     price: float
-    attributes: List[Dict[str, str]]
+    attributes: List[Dict[str, List[str]]]  # Updated for nested list structure
     category: str
     description: str
     image_url: List[HttpUrl]
@@ -89,25 +84,33 @@ class Product(BaseModel):
         default_factory=datetime.now,
         description="Product last update timestamp"
     )
+    url: HttpUrl  # Added field for product URL
+    homePage: Optional[HttpUrl] = None  # Optional field for homepage
+    returns: Optional[HttpUrl] = None  # Optional field for returns URL
 
     class Config:
-        json_schema_extra = {
+        schema_extra = {
             "example": {
-                "id": "fff0834a-280e-4bbb-b7d8-6f0a43495029",
-                "title": "Floral Print Summer Dress",
-                "brand": "Zellbury",
-                "price": 2999.99,
+                "id": "673dcd1a57abf185743f9611",
+                "title": "1 PC Printed Lawn Dupatta",
+                "brand": "alkaramstudio",
+                "price": 927.00,
                 "attributes": [
-                    {"Color": "Pink"},
-                    {"Size": "M"},
-                    {"Fabric": "Cotton"},
-                    {"Season": "SUMMER"}
+                    {"Color": ["Grey"]},
+                    {"Fabric": ["Lawn"]}
                 ],
-                "category": "Stitched",
-                "description": "Beautiful floral print summer dress...",
-                "image_url": ["https://example.com/images/dress1.jpg"],
-                "created_at": "2024-01-01T00:00:00",
-                "updated_at": "2024-01-01T00:00:00"
+                "category": "Alkaram Studio - Kurti",
+                "description": "1 PC Printed Lawn Dupatta",
+                "image_url": [
+                    "https://cdn.shopify.com/s/files/1/0623/6481/1444/products/SLRD-01-23-3-Grey-1.jpg?v=1718486171",
+                    "https://cdn.shopify.com/s/files/1/0623/6481/1444/products/SLRD-01-23-3-Grey-2.jpg?v=1718486174",
+                    "https://cdn.shopify.com/s/files/1/0623/6481/1444/products/SLRD-01-23-3-Grey-3.jpg?v=1718486177"
+                ],
+                "url": "https://www.alkaramstudio.com/products/1-pc-printed-lawn-dupatta-slrd-01-23-3-grey",
+                "homePage": "https://www.alkaramstudio.com/",
+                "returns": "https://www.alkaramstudio.com/pages/return-and-exchange-policy",
+                "created_at": "2024-12-03T10:30:00",
+                "updated_at": "2024-12-03T10:30:00"
             }
         }
 
