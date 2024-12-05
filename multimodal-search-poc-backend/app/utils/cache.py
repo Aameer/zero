@@ -103,7 +103,7 @@ class CacheManager:
     
     def should_refresh_embeddings(self, catalog_data) -> bool:
         """Determine if embeddings need to be refreshed based on settings and catalog changes"""
-        if getattr(self.settings, 'REFRESH_EMBEDDINGS', False):
+        if getattr(self.settings, 'REFRESH_EMBEDDINGS', True):
             logger.info("Forced refresh of embeddings due to REFRESH_EMBEDDINGS setting")
             return True
 
@@ -201,7 +201,7 @@ class CacheManager:
 
             if metadata:
                 cache_time = datetime.fromisoformat(metadata.get('timestamp', '2000-01-01'))
-                if (datetime.now() - cache_time).days < 7:
+                if (datetime.now() - cache_time).days < 70:
                     with np.load(path) as data:
                         return {k: data[k] for k in data.files}
                 else:
