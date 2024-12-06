@@ -1133,44 +1133,63 @@ class EnhancedSearchService:
             raise
 
     def _transcribe_audio(self, audio_bytes: bytes) -> str:
-        """Transcribe audio to text, handling different audio formats including WebM"""
+        """
+        Transcribe audio to text, with enhanced format handling for cross-platform support.
+        Handles iOS audio format along with web browser formats.
+        """
         try:
-            # First try to determine the format and convert if necessary
+            import io
+            import tempfile
+            from pydub import AudioSegment
+            import numpy as np
+            import logging
+
+            logger = logging.getLogger(__name__)
+            
+            # First try direct loading with librosa
             try:
-                # Try to load with librosa which handles multiple formats
-                import io
-                import soundfile as sf
-                import numpy as np
-                from pydub import AudioSegment
-                import tempfile
+                audio_array, sample_rate = librosa.load(io.BytesIO(audio_bytes), sr=16000)
+                logger.info("Successfully loaded audio directly with librosa")
+            except Exception as direct_error:
+                logger.info(f"Direct loading failed: {direct_error}. Trying format conversion...")
+                
+                # Create a temporary file for the incoming audio
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_input:
+                    temp_input.write(audio_bytes)
+                    temp_input.flush()
+                    
+                    try:
+                        # Try loading as different formats
+                        for format_try in ['wav', 'mp4', 'm4a', 'caf']:  # Add CAF format for iOS
+                            try:
+                                logger.info(f"Attempting to load as {format_try}")
+                                audio = AudioSegment.from_file(temp_input.name, format=format_try)
+                                
+                                # Export to WAV format
+                                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
+                                    audio.export(temp_wav.name, format='wav')
+                                    # Load the converted WAV file
+                                    audio_array, sample_rate = librosa.load(temp_wav.name, sr=16000)
+                                    logger.info(f"Successfully converted from {format_try} to WAV")
+                                    break
+                            except Exception as e:
+                                logger.info(f"Failed to load as {format_try}: {e}")
+                                continue
+                        else:
+                            raise Exception("Failed to load audio in any known format")
+                            
+                    except Exception as conversion_error:
+                        logger.error(f"All conversion attempts failed: {conversion_error}")
+                        raise
 
-                # Create a temporary file to save the audio
-                with tempfile.NamedTemporaryFile(suffix='.webm', delete=True) as temp_webm:
-                    temp_webm.write(audio_bytes)
-                    temp_webm.flush()
-
-                    # Convert WebM to WAV using pydub
-                    audio = AudioSegment.from_file(temp_webm.name)
-
-                    # Create another temporary file for WAV
-                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=True) as temp_wav:
-                        audio.export(temp_wav.name, format='wav')
-
-                        # Now load the WAV file with librosa
-                        audio_array, sample_rate = librosa.load(
-                            temp_wav.name,
-                            sr=16000  # Whisper expects 16kHz
-                        )
-
-            except Exception as e:
-                # If conversion fails, try direct loading
-                logger.warning(f"WebM conversion failed, trying direct loading: {str(e)}")
-                audio_array, sample_rate = librosa.load(
-                    io.BytesIO(audio_bytes),
-                    sr=16000
-                )
-
-            # Convert to float32 and normalize
+            # Ensure audio is the right format and length
+            if len(audio_array.shape) > 1:
+                audio_array = np.mean(audio_array, axis=1)
+            
+            # Normalize audio
+            audio_array = audio_array / np.max(np.abs(audio_array))
+            
+            # Convert to float32
             audio_array = audio_array.astype(np.float32)
 
             # Create input features for Whisper
@@ -1188,7 +1207,7 @@ class EnhancedSearchService:
                     skip_special_tokens=True
                 )[0]
 
-            logger.info(f"Transcribed Audio: {transcription}")
+            logger.info(f"Successfully transcribed audio: {transcription}")
             return transcription
 
         except Exception as e:
