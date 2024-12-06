@@ -242,6 +242,7 @@ class EnhancedSearchService:
 
         # Style affinity
         product_styles = [attr['Style'] for attr in product.attributes if 'Style' in attr]
+        
         if any(style in stored_preferences.style_preferences for style in product_styles):
             affinity_score *= 1.2
 
@@ -671,10 +672,14 @@ class EnhancedSearchService:
 
         # Color match with semantic matching
         if preferences.preferred_colors:
+   
             product_colors = [
-                attr['Color'] for attr in product.attributes
-                if 'Color' in attr
-            ]
+                    color
+                    for attr in product.attributes
+                    if 'Color' in attr
+                    for color in (attr['Color'] if isinstance(attr['Color'], list) else [attr['Color']])
+                ]
+            
             color_matches = []
             for preferred_color in preferences.preferred_colors:
                 similar_colors = SearchWeights.COLOR_SIMILARITY.get(preferred_color.lower(), [])
@@ -877,17 +882,20 @@ class EnhancedSearchService:
             # Color preference with semantic matching
             if preferences.preferred_colors:
                 product_colors = [
-                    attr['Color'] for attr in product.attributes
+                    color
+                    for attr in product.attributes
                     if 'Color' in attr
+                    for color in (attr['Color'] if isinstance(attr['Color'], list) else [attr['Color']])
                 ]
-                for preferred_color in preferences.preferred_colors:
+                
+                for preferred_color in preferences.preferred_colors:    
                     similar_colors = SearchWeights.COLOR_SIMILARITY.get(preferred_color.lower(), [])
                     if any(color.lower() in [preferred_color.lower()] + similar_colors
                         for color in product_colors):
                         final_score *= (1.0 + weights['color'])
                         logger.info(f"Color match boost: {final_score}")
                         break
-
+            
             # Category preference with stronger impact
             if preferences.category_weights and product.category in preferences.category_weights:
                 category_boost = preferences.category_weights[product.category] * weights['category']
@@ -895,13 +903,16 @@ class EnhancedSearchService:
                 logger.info(f"Category boost: {final_score}")
 
             # Seasonal preference
-            product_season = next((attr['Season'] for attr in product.attributes
-                                if 'Season' in attr), None)
-            if product_season and product_season.upper() == current_season:
+            product_seasons = next(
+                    (value.lower() for attr in product.attributes if "Season" in attr for value in (attr['Season'] if isinstance(attr['Season'], list) else [attr['Season']])),
+                    []
+                )
+            
+            if current_season and current_season.lower() in product_seasons:
                 final_score *= (1.0 + weights['seasonal'])
                 logger.info(f"Seasonal boost: {final_score}")
 
-            # Log final score for debugging
+            # # Log final score for debugging
             logger.info(f"Final score for product {product.id}: {final_score}")
             results.append((idx, final_score))
 
