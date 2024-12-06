@@ -68,7 +68,7 @@ class UserPreferences(BaseModel):
         return v
 
 class Product(BaseModel):
-    id: UUID
+    id: str
     title: str
     brand: str
     price: float
