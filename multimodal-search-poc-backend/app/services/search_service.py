@@ -1134,106 +1134,153 @@ class EnhancedSearchService:
 
     def _transcribe_audio(self, audio_bytes: bytes) -> str:
         """
-        Transcribe audio to text with enhanced iOS support.
-        Handles iOS M4A/ipcm format along with other audio formats.
+        Enhanced audio transcription that handles multiple formats including iOS audio.
+        
+        Args:
+            audio_bytes (bytes): Raw audio data in any supported format
+            
+        Returns:
+            str: Transcribed text from the audio
+            
+        Raises:
+            Exception: If audio conversion or transcription fails
         """
         try:
             import io
             import tempfile
+            import os
             from pydub import AudioSegment
             import numpy as np
-            import logging
             import subprocess
-            import os
-
+            import logging
+    
             logger = logging.getLogger(__name__)
             
-            def convert_with_ffmpeg(input_path, output_path):
-                """Convert audio using ffmpeg with specific parameters for iOS audio"""
+            def convert_with_ffmpeg(input_path: str, output_path: str) -> bool:
+                """Convert audio using FFmpeg with specific format handling."""
                 try:
-                    # Set ffmpeg parameters specifically for iOS M4A/ipcm format
+                    # FFmpeg command with explicit format handling
                     cmd = [
                         'ffmpeg',
-                        '-y',  # Overwrite output file if it exists
-                        '-f', 'mov',  # Force mov format for input
-                        '-i', input_path,
-                        '-acodec', 'pcm_s16le',  # Force PCM 16-bit output
-                        '-ar', '16000',  # Set sample rate to 16kHz
-                        '-ac', '1',  # Convert to mono
-                        '-f', 'wav',  # Output as WAV
+                        '-y',                     # Overwrite output file if exists
+                        '-analyzeduration', '0',  # Skip format analysis
+                        '-i', input_path,         # Input file
+                        '-vn',                    # Disable video processing
+                        '-acodec', 'pcm_s16le',   # Force output codec
+                        '-ar', '16000',           # Set sample rate
+                        '-ac', '1',               # Convert to mono
+                        '-f', 'wav',              # Force WAV output
                         output_path
                     ]
                     
-                    # Run ffmpeg
                     process = subprocess.Popen(
                         cmd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE
                     )
-                    stdout, stderr = process.communicate()
+                    
+                    _, stderr = process.communicate()
                     
                     if process.returncode != 0:
-                        logger.error(f"FFmpeg error: {stderr.decode()}")
+                        logger.error(f"FFmpeg conversion failed: {stderr.decode()}")
                         return False
-                    return True
+                    
+                    return os.path.exists(output_path) and os.path.getsize(output_path) > 0
+                    
                 except Exception as e:
-                    logger.error(f"FFmpeg conversion error: {e}")
+                    logger.error(f"FFmpeg error: {str(e)}")
                     return False
-
-            # Create temporary files for processing
-            with tempfile.NamedTemporaryFile(suffix='.m4a', delete=False) as temp_input:
+            
+            def convert_with_pydub(input_path: str, output_path: str) -> bool:
+                """Convert audio using pydub with fallback options."""
+                formats_to_try = [
+                    # Try iOS specific format first
+                    {
+                        'format': 'raw',
+                        'frame_rate': 44100,
+                        'channels': 1,
+                        'sample_width': 2
+                    },
+                    # Then try standard formats
+                    {'format': 'm4a'},
+                    {'format': 'wav'},
+                    {'format': 'mp3'},
+                    # Try mov format
+                    {
+                        'format': 'mov',
+                        'frame_rate': 44100,
+                        'channels': 1
+                    }
+                ]
+                
+                for format_options in formats_to_try:
+                    try:
+                        # Attempt to load the audio with current format options
+                        audio = AudioSegment.from_file(input_path, **format_options)
+                        
+                        # Convert to standard format
+                        audio = audio.set_frame_rate(16000).set_channels(1)
+                        
+                        # Export as WAV
+                        audio.export(output_path, format='wav')
+                        
+                        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                            logger.info(f"Successfully converted using format: {format_options}")
+                            return True
+                            
+                    except Exception as e:
+                        logger.debug(f"Failed conversion with {format_options}: {str(e)}")
+                        continue
+                
+                return False
+    
+            # Create temporary files
+            with tempfile.NamedTemporaryFile(suffix='.mov', delete=False) as temp_input, \
+                 tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_output:
                 try:
                     # Write input audio to temporary file
                     temp_input.write(audio_bytes)
                     temp_input.flush()
                     
-                    # Create temporary WAV file
-                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
-                        temp_wav_path = temp_wav.name
+                    # Try conversions
+                    conversion_success = False
                     
-                    # Try direct FFmpeg conversion first
-                    if convert_with_ffmpeg(temp_input.name, temp_wav_path):
-                        logger.info("Successfully converted audio using FFmpeg")
-                        audio_array, sample_rate = librosa.load(temp_wav_path, sr=16000)
+                    # First try FFmpeg
+                    if convert_with_ffmpeg(temp_input.name, temp_output.name):
+                        conversion_success = True
+                        logger.info("FFmpeg conversion successful")
                     else:
-                        # Fallback to pydub if FFmpeg direct conversion fails
-                        logger.info("FFmpeg conversion failed, trying pydub...")
-                        try:
-                            # Try different format interpretations
-                            for format_try in ['wav', 'mp4', 'm4a', 'mov']:
-                                try:
-                                    audio = AudioSegment.from_file(temp_input.name, format=format_try)
-                                    audio = audio.set_frame_rate(16000).set_channels(1)
-                                    audio.export(temp_wav_path, format='wav')
-                                    audio_array, sample_rate = librosa.load(temp_wav_path, sr=16000)
-                                    logger.info(f"Successfully converted using pydub with format {format_try}")
-                                    break
-                                except Exception as e:
-                                    logger.info(f"Failed to load as {format_try}: {e}")
-                                    continue
-                            else:
-                                raise Exception("Failed to convert audio in any format")
-                        except Exception as e:
-                            logger.error(f"Pydub conversion failed: {e}")
-                            raise
-
-                    # Ensure audio is normalized and in correct format
+                        # Then try pydub
+                        logger.info("FFmpeg failed, trying pydub...")
+                        if convert_with_pydub(temp_input.name, temp_output.name):
+                            conversion_success = True
+                            logger.info("Pydub conversion successful")
+                    
+                    if not conversion_success:
+                        raise Exception("All conversion attempts failed")
+                    
+                    # Load the converted audio
+                    audio_array, _ = librosa.load(temp_output.name, sr=16000)
+                    
+                    # Process the audio array
                     if len(audio_array.shape) > 1:
                         audio_array = np.mean(audio_array, axis=1)
+                        
+                    # Normalize with safety check
+                    max_val = np.max(np.abs(audio_array))
+                    if max_val > 0:
+                        audio_array = audio_array / max_val
                     
-                    # Normalize audio
-                    audio_array = audio_array / (np.max(np.abs(audio_array)) + 1e-10)
-                    
-                    # Convert to float32
+                    # Prepare for whisper
                     audio_array = audio_array.astype(np.float32)
-
-                    # Create input features for Whisper
+                    
+                    # Create features for Whisper model
                     input_features = self.audio_processor(
                         audio_array,
                         sampling_rate=16000,
                         return_tensors="pt"
                     ).input_features
-
+                    
                     # Generate transcription
                     with torch.no_grad():
                         predicted_ids = self.audio_model.generate(input_features)
@@ -1241,21 +1288,23 @@ class EnhancedSearchService:
                             predicted_ids,
                             skip_special_tokens=True
                         )[0]
-
-                    logger.info(f"Successfully transcribed audio: {transcription}")
+                    
+                    logger.info(f"Successfully transcribed: {transcription}")
                     return transcription
-
+                    
                 finally:
                     # Clean up temporary files
-                    for temp_file in [temp_input.name, temp_wav_path]:
+                    for temp_file in [temp_input.name, temp_output.name]:
                         try:
-                            os.unlink(temp_file)
+                            if os.path.exists(temp_file):
+                                os.unlink(temp_file)
                         except Exception as e:
-                            logger.warning(f"Error cleaning up temporary file {temp_file}: {e}")
-
+                            logger.warning(f"Failed to delete temporary file {temp_file}: {e}")
+        
         except Exception as e:
-            logger.error(f"Error in audio transcription: {str(e)}")
+            logger.error(f"Transcription error: {str(e)}")
             raise
+
 
     def _preprocess_audio(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         """Preprocess audio data for the model"""
