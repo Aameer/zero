@@ -121,13 +121,13 @@ class PreferencesFetcher:
             }
             
             url = settings.get_user_preferences_url(user_id)
-            logger.info(f"Fetching preferences from: {url}")
+            #logger.info(f"Fetching preferences from: {url}")
             
             async with self.session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
                     shopping_prefs = data.get("shopping_preferences", {})
-                    logger.info(f"Raw shopping preferences from API: {shopping_prefs}")
+                    #logger.info(f"Raw shopping preferences from API: {shopping_prefs}")
                     
                     # Create StoredPreferences with the actual data
                     return StoredPreferences(
@@ -161,7 +161,7 @@ class EnhancedSearchService:
         self.products = [Product(**p) for p in catalog]
         
         # Initialize preferences fetcher with base_url
-        logger.info(f"Initializing EnhancedSearchService with base URL: {base_url}")
+        #logger.info(f"Initializing EnhancedSearchService with base URL: {base_url}")
         self.preferences_fetcher = PreferencesFetcher(base_url)
         
         # Initialize cache manager
@@ -181,7 +181,7 @@ class EnhancedSearchService:
     ) -> UserPreferences:
         """Convert stored preferences to search preferences"""
         try:
-            logger.info(f"Converting stored preferences: {stored_prefs}")
+            #logger.info(f"Converting stored preferences: {stored_prefs}")
             
             price_range = None
             if stored_prefs.price_range:
@@ -189,7 +189,7 @@ class EnhancedSearchService:
                     stored_prefs.price_range["min"],
                     stored_prefs.price_range["max"]
                 )
-                logger.info(f"Converted price range: {price_range}")
+                #logger.info(f"Converted price range: {price_range}")
 
             user_prefs = UserPreferences(
                 brand_weights=stored_prefs.brand_affinities,
@@ -201,11 +201,11 @@ class EnhancedSearchService:
                 seasonal_preference=stored_prefs.seasonal_preferences[0] if stored_prefs.seasonal_preferences else None
             )
             
-            logger.info(f"Converted to user preferences: {user_prefs}")
+            #logger.info(f"Converted to user preferences: {user_prefs}")
             return user_prefs
 
         except Exception as e:
-            logger.error(f"Error converting preferences: {e}")
+            #logger.error(f"Error converting preferences: {e}")
             # Return default preferences
             return UserPreferences(
                 brand_weights={},
@@ -856,14 +856,14 @@ class EnhancedSearchService:
             if preferences.brand_weights and product.brand in preferences.brand_weights:
                 brand_boost = preferences.brand_weights[product.brand] * weights['brand']
                 final_score *= (1.0 + brand_boost)
-                logger.info(f"After brand boost ({product.brand}): {final_score}")
+                #logger.info(f"After brand boost ({product.brand}): {final_score}")
 
             # Price range preference with gradual penalty
             if preferences.price_range:
                 min_price, max_price = preferences.price_range
                 if min_price <= product.price <= max_price:
                     final_score *= (1.0 + weights['price'])
-                    logger.info(f"In price range boost: {final_score}")
+                    #logger.info(f"In price range boost: {final_score}")
                 else:
                     # Calculate distance from preferred range
                     if product.price < min_price:
@@ -872,7 +872,7 @@ class EnhancedSearchService:
                         distance = (product.price - max_price) / max_price
                     penalty = min(0.8, distance)  # Cap penalty at 80%
                     final_score *= (1.0 - penalty)
-                    logger.info(f"Price penalty applied: {final_score}")
+                    #logger.info(f"Price penalty applied: {final_score}")
 
             # Color preference with semantic matching
             if preferences.preferred_colors:
@@ -885,21 +885,21 @@ class EnhancedSearchService:
                     if any(color.lower() in [preferred_color.lower()] + similar_colors
                         for color in product_colors):
                         final_score *= (1.0 + weights['color'])
-                        logger.info(f"Color match boost: {final_score}")
+                        #logger.info(f"Color match boost: {final_score}")
                         break
 
             # Category preference with stronger impact
             if preferences.category_weights and product.category in preferences.category_weights:
                 category_boost = preferences.category_weights[product.category] * weights['category']
                 final_score *= (1.0 + category_boost)
-                logger.info(f"Category boost: {final_score}")
+                #logger.info(f"Category boost: {final_score}")
 
             # Seasonal preference
             product_season = next((attr['Season'] for attr in product.attributes
                                 if 'Season' in attr), None)
             if product_season and product_season.upper() == current_season:
                 final_score *= (1.0 + weights['seasonal'])
-                logger.info(f"Seasonal boost: {final_score}")
+                #logger.info(f"Seasonal boost: {final_score}")
 
             # Log final score for debugging
             logger.info(f"Final score for product {product.id}: {final_score}")
@@ -947,16 +947,16 @@ class EnhancedSearchService:
         """Enhanced search incorporating API-fetched preferences"""
         stored_preferences = None
         
-        logger.info(f"Starting search with auth for user {user_id}")
+        #logger.info(f"Starting search with auth for user {user_id}")
         
         if user_id and auth_token:
-            logger.info(f"Fetching preferences for user {user_id}")
+            #logger.info(f"Fetching preferences for user {user_id}")
             async with PreferencesFetcher(base_url=settings.BACKEND_URL) as fetcher:
                 stored_prefs = await fetcher.get_user_preferences(user_id, auth_token)
                 if stored_prefs:
-                    logger.info(f"Successfully fetched preferences: {stored_prefs}")
+                    #logger.info(f"Successfully fetched preferences: {stored_prefs}")
                     stored_preferences = self._convert_stored_to_user_preferences(stored_prefs)
-                    logger.info(f"Converted to user preferences: {stored_preferences}")
+                    #logger.info(f"Converted to user preferences: {stored_preferences}")
                 else:
                     logger.warning("No stored preferences found")
         
@@ -965,7 +965,7 @@ class EnhancedSearchService:
             final_preferences = stored_preferences
             if user_preferences:
                 final_preferences = self._combine_preferences(stored_preferences, user_preferences)
-                logger.info(f"Combined preferences: {final_preferences}")
+                #logger.info(f"Combined preferences: {final_preferences}")
             
             logger.info(f"Using preferences for search: {final_preferences}")
             return self.search(
@@ -1012,7 +1012,7 @@ class EnhancedSearchService:
             else:
                 raise ValueError(f"Unsupported search type: {query_type}")
             
-            logger.info(f"initial results: {initial_results}")
+            #logger.info(f"initial results: {initial_results}")
             # Apply preferences if available
             if user_preferences:
                 # Convert results to numpy arrays for _apply_preferences
@@ -1024,7 +1024,7 @@ class EnhancedSearchService:
             else:
                 weighted_results = initial_results
 
-            logger.info(f"weighted  results: {weighted_results}")
+            #logger.info(f"weighted  results: {weighted_results}")
             # Create SearchResult objects
             search_results = []
             processed_indices = set()  # To avoid duplicates
@@ -1048,7 +1048,7 @@ class EnhancedSearchService:
                         )
                     )
 
-            logger.info(f"search  results: {search_results}")
+            #logger.info(f"search  results: {search_results}")
             # Sort by final score while maintaining diversity
             search_results.sort(key=lambda x: x.similarity_score, reverse=True)
             
@@ -1288,7 +1288,7 @@ class EnhancedSearchService:
                             predicted_ids,
                             skip_special_tokens=True
                         )[0]
-                    
+                    logger.info(">>"*50)
                     logger.info(f"Successfully transcribed: {transcription}")
                     return transcription
                     
