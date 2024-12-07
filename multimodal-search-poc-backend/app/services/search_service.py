@@ -850,7 +850,7 @@ class EnhancedSearchService:
             final_score = float(score)  # Base similarity score
             
             # Log initial score for debugging
-            logger.info(f"Initial score for product {product.id}: {final_score}")
+            #logger.info(f"Initial score for product {product.id}: {final_score}")
             
             # Brand preference with stronger impact
             if preferences.brand_weights and product.brand in preferences.brand_weights:
@@ -902,7 +902,7 @@ class EnhancedSearchService:
                 #logger.info(f"Seasonal boost: {final_score}")
 
             # Log final score for debugging
-            logger.info(f"Final score for product {product.id}: {final_score}")
+            #logger.info(f"Final score for product {product.id}: {final_score}")
             results.append((idx, final_score))
 
         # Sort by final score
