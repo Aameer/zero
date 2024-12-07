@@ -967,7 +967,7 @@ class EnhancedSearchService:
                 final_preferences = self._combine_preferences(stored_preferences, user_preferences)
                 #logger.info(f"Combined preferences: {final_preferences}")
             
-            logger.info(f"Using preferences for search: {final_preferences}")
+            #logger.info(f"Using preferences for search: {final_preferences}")
             return self.search(
                 query_type=query_type,
                 query=query,
@@ -1288,8 +1288,8 @@ class EnhancedSearchService:
                             predicted_ids,
                             skip_special_tokens=True
                         )[0]
-                    logger.info(">>"*50)
-                    logger.info(f"Successfully transcribed: {transcription}")
+                    #logger.info(">>"*50)
+                    logger.info(f"Successfully transcribed >>>: {transcription}")
                     return transcription
                     
                 finally:
