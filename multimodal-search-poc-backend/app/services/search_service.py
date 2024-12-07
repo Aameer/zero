@@ -938,7 +938,7 @@ class EnhancedSearchService:
         self,
         query_type: SearchType,
         query: Union[str, bytes],
-        num_results: int = 5,
+        num_results: int = 10,
         min_similarity: float = 0.0,
         user_preferences: Optional[UserPreferences] = None,
         user_id: Optional[int] = None,
@@ -1084,17 +1084,6 @@ class EnhancedSearchService:
                 query_embedding.astype('float32'),
                 num_results
             )
-            # print(
-            #     ">"*100, 
-            #     len(
-            #         list(
-            #             zip(
-            #                 indices[0],
-            #                 similarities[0]
-            #             )
-            #         )
-            #     )
-            # )
             return list(zip(indices[0], similarities[0]))
 
         except Exception as e:

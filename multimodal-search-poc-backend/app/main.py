@@ -148,7 +148,7 @@ async def detailed_search(
 async def image_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
-    num_results: int = Form(5),
+    num_results: int = Form(10),
     min_similarity: float = Form(0.0),
     user_id: Optional[int] = Form(None),
     authorization: Optional[str] = Header(None)
@@ -192,7 +192,7 @@ async def image_search(
 async def detailed_image_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
-    num_results: int = Form(5),
+    num_results: int = Form(10),
     min_similarity: float = Form(0.0),
     user_id: Optional[int] = Form(None),
     authorization: Optional[str] = Header(None)
@@ -232,7 +232,7 @@ async def detailed_image_search(
 async def audio_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
-    num_results: int = Form(5),
+    num_results: int = Form(10),
     min_similarity: float = Form(0.0),
     user_id: Optional[int] = Form(None),
     authorization: Optional[str] = Header(None)
@@ -302,7 +302,7 @@ async def audio_search(
 async def detailed_audio_search(
     file: UploadFile = File(...),
     preferences: str = Form(None),
-    num_results: int = Form(5),
+    num_results: int = Form(10),
     min_similarity: float = Form(0.0),
     user_id: Optional[int] = Form(None),
     authorization: Optional[str] = Header(None)
